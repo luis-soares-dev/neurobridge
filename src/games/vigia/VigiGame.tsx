@@ -2,8 +2,9 @@
 
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useVigiGame, TARGET_COLOR, TIMING_CONFIG } from './useVigiGame'
-import type { VigiResults, DifficultyLevel } from './useVigiGame'
+import { useVigiGame, TIMING_CONFIG } from './useVigiGame'
+import type { VigiResults } from './useVigiGame'
+import type { DifficultyLevel } from '@/types'
 import { interpretKScore } from '@/lib/kscore'
 
 const COLOR_MAP: Record<string, string> = {
