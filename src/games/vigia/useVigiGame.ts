@@ -2,7 +2,9 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { calculateKScore, calculateXP } from '@/lib/kscore'
-import { supabase } from '@/lib/supabase'
+import { persistSession } from './persistSession'
+import { useAuthStore } from '@/store/authStore'
+import { readDifficulty, normalizeDifficulty } from '@/lib/gameProgress'
 import { playHitSound, playFalseAlarmSound } from '@/lib/audio'
 import type { Trial, DifficultyLevel, KScoreResult } from '@/types'
 
@@ -43,7 +45,7 @@ export interface VigiResults {
 const TOTAL_TRIALS    = 30
 const TARGET_COUNT    = 8
 const COUNTDOWN_FROM  = 3
-const VIGIA_DIFF_KEY  = 'vigia_difficulty'
+
 
 export const TARGET_COLOR: StimulusColor = 'azul'
 
@@ -66,13 +68,6 @@ function getDistractorColors(difficulty: DifficultyLevel): StimulusColor[] {
   if (difficulty <= 3) return ['vermelho', 'verde', 'laranja']
   if (difficulty <= 6) return ['vermelho', 'verde', 'laranja', 'ciano']
   return ['vermelho', 'verde', 'laranja', 'ciano', 'roxo']
-}
-
-function getSavedDifficulty(): DifficultyLevel {
-  try {
-    const v = parseInt(localStorage.getItem(VIGIA_DIFF_KEY) ?? '3', 10)
-    return (Math.min(Math.max(v, 1), 10) as DifficultyLevel)
-  } catch { return 3 }
 }
 
 // ── Geração de estímulos ────────────────────────────────────────────────────
@@ -126,43 +121,11 @@ function computeResults(
 
 // ── Persistência ────────────────────────────────────────────────────────────
 
-async function persistSession(results: VigiResults): Promise<void> {
-  try {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-
-    await supabase.from('sessions').insert({
-      user_id: user.id,
-      game_id: 'vigia',
-      domain: 'atencao',
-      k_score: results.kResult.kScore,
-      difficulty_level: results.difficulty,
-      xp_earned: results.xpEarned,
-      total_trials: results.trials.length,
-      correct_trials: results.hits + results.correctRejections,
-      ended_at: new Date().toISOString(),
-    })
-
-    const { data: profile } = await supabase
-      .from('profiles').select('xp_total').eq('id', user.id).single()
-
-    const newXP    = (profile?.xp_total ?? 0) + results.xpEarned
-    const newLevel = Math.floor(newXP / 500) + 1
-
-    await supabase.from('profiles')
-      .update({ xp_total: newXP, level: newLevel, updated_at: new Date().toISOString() })
-      .eq('id', user.id)
-
-    localStorage.setItem(VIGIA_DIFF_KEY, String(results.kResult.nextDifficulty))
-  } catch (err) {
-    console.error('Erro ao persistir sessão:', err)
-  }
-}
-
 // ── Hook principal ──────────────────────────────────────────────────────────
 
 export function useVigiGame() {
-  const [difficulty, setDifficulty] = useState<DifficultyLevel>(getSavedDifficulty)
+  const userId = useAuthStore(state => state.user?.id)
+  const [difficulty, setDifficulty] = useState<DifficultyLevel>(() => readDifficulty(userId))
   const timing = TIMING_CONFIG[difficulty] ?? TIMING_CONFIG[3]
 
   const [phase, setPhase]               = useState<VigiPhase>('instructions')
@@ -171,9 +134,30 @@ export function useVigiGame() {
   const [showStimulus, setShowStimulus] = useState(false)
   const [results, setResults]           = useState<VigiResults | null>(null)
   const [saving, setSaving]             = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const savingRef = useRef(false)
+  const sessionRef = useRef({ id: '', userId: '', startedAt: '' })
+
+  const saveResults = useCallback(async (value: VigiResults) => {
+    if (savingRef.current) return
+    savingRef.current = true
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const session = sessionRef.current
+      await persistSession(value, session.id, session.userId, session.startedAt)
+      setSaved(true)
+    } catch {
+      setSaveError('Não foi possível salvar. Sua partida continua nesta tela. Tente novamente antes de sair.')
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
+  }, [])
 
   // stimuli como state para poder ser regenerado ao mudar dificuldade
-  const [stimuli, setStimuli] = useState<VigiStimulus[]>(() => generateStimuli(getSavedDifficulty()))
+  const [stimuli, setStimuli] = useState<VigiStimulus[]>(() => generateStimuli(readDifficulty(userId)))
 
   const stimulusActiveRef  = useRef(false)
   const respondedRef       = useRef(false)
@@ -184,7 +168,11 @@ export function useVigiGame() {
 
   // ── Inicia o jogo com a dificuldade escolhida ─────────────────────────────
   const startGame = useCallback((chosenDifficulty?: DifficultyLevel) => {
-    const d = chosenDifficulty ?? difficulty
+    if (savingRef.current || !userId) return
+    const d = normalizeDifficulty(chosenDifficulty ?? difficulty)
+    sessionRef.current = { id: crypto.randomUUID(), userId, startedAt: new Date().toISOString() }
+    setSaved(false)
+    setSaveError(null)
     setDifficulty(d)
     setStimuli(generateStimuli(d))      // regera estímulos para o nível certo
     trialResultsRef.current = []
@@ -194,13 +182,13 @@ export function useVigiGame() {
     setCountdown(COUNTDOWN_FROM)
     setTrialIndex(0)
     setPhase('countdown')
-  }, [difficulty])
+  }, [difficulty, userId])
 
   // ── Resposta (Space ou botão) ─────────────────────────────────────────────
   const handleResponse = useCallback(() => {
     if (stimulusActiveRef.current && !respondedRef.current) {
       respondedRef.current    = true
-      responseTimeRef.current = Date.now()
+      responseTimeRef.current = performance.now()
       // Toca o som certo conforme o estímulo visível
       if (currentStimulusRef.current?.isTarget) {
         playHitSound()
@@ -226,8 +214,7 @@ export function useVigiGame() {
       const finalResults = computeResults(trialResultsRef.current, difficulty, timing)
       setResults(finalResults)
       setPhase('results')
-      setSaving(true)
-      persistSession(finalResults).finally(() => setSaving(false))
+      void saveResults(finalResults)
       return
     }
 
@@ -237,17 +224,18 @@ export function useVigiGame() {
     const stimulus = stimuli[trialIndex]
     currentStimulusRef.current = stimulus   // disponível para handleResponse
 
-    const stimulusStart = Date.now()
+    const stimulusStart = performance.now()
     stimulusActiveRef.current = true
     setShowStimulus(true)
 
+    let itiTimer: ReturnType<typeof setTimeout> | undefined
     const hideTimer = setTimeout(() => {
       stimulusActiveRef.current  = false
       currentStimulusRef.current = null
       setShowStimulus(false)
 
       const responded = respondedRef.current
-      const rt        = responded ? responseTimeRef.current - stimulusStart : null
+      const rt        = responded ? Math.round(responseTimeRef.current - stimulusStart) : null
       const isCorrect = (stimulus.isTarget && responded) || (!stimulus.isTarget && !responded)
 
       trialResultsRef.current.push({
@@ -255,33 +243,33 @@ export function useVigiGame() {
         responded, responseTime: rt, isCorrect,
       })
 
-      const itiTimer = setTimeout(() => setTrialIndex(i => i + 1), timing.iti)
-      ;(hideTimer as unknown as { itiRef: ReturnType<typeof setTimeout> }).itiRef = itiTimer
+      itiTimer = setTimeout(() => setTrialIndex(i => i + 1), timing.iti)
     }, timing.stimulus)
 
     return () => {
       stimulusActiveRef.current = false
       clearTimeout(hideTimer)
-      // @ts-ignore
-      clearTimeout(hideTimer.itiRef)
+      clearTimeout(itiTimer)
     }
-  }, [phase, trialIndex, stimuli, difficulty, timing])
+  }, [phase, trialIndex, stimuli, difficulty, timing, saveResults])
 
   // ── Listener de teclado ───────────────────────────────────────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.code === 'Space') { e.preventDefault(); handleResponse() }
+      if (phase === 'playing' && e.code === 'Space' && !e.repeat) { e.preventDefault(); handleResponse() }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [handleResponse])
+  }, [handleResponse, phase])
 
   return {
     phase, countdown, trialIndex,
     totalTrials: TOTAL_TRIALS,
     showStimulus,
     currentStimulus: stimuli[trialIndex] ?? null,
-    results, saving, difficulty, timing,
+    results, saving, saved, saveError, difficulty, timing,
+    retrySave: () => results && void saveResults(results),
     startGame, handleResponse,
   }
 }
+

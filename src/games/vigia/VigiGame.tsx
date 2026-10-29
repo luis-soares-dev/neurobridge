@@ -1,6 +1,8 @@
 // VigiGame.tsx — Apresentação do Jogo Vigia (sem lógica de jogo)
 
 import { useState } from 'react'
+import { useAuthStore } from '@/store/authStore'
+import { useVigiaDifficulty } from '@/lib/useVigiaDifficulty'
 import { useNavigate } from 'react-router-dom'
 import { useVigiGame, TIMING_CONFIG } from './useVigiGame'
 import type { VigiResults } from './useVigiGame'
@@ -220,8 +222,8 @@ function GameArena({
 
 // ── Resultados ──────────────────────────────────────────────────────────────
 
-function Results({ results, saving, onReplay, onDashboard }: {
-  results: VigiResults; saving: boolean
+function Results({ results, saving, saved, saveError, onRetry, onReplay, onDashboard }: {
+  results: VigiResults; saving: boolean; saved: boolean; saveError: string | null; onRetry: () => void
   onReplay: () => void; onDashboard: () => void
 }) {
   const interp = interpretKScore(results.kResult.kScore)
@@ -274,10 +276,20 @@ function Results({ results, saving, onReplay, onDashboard }: {
             +{results.xpEarned} XP
           </span>
           <span style={{ color: saving ? '#5a5a8a' : '#3a6a3a', fontSize: '0.75rem' }}>
-            {saving ? '⏳ A guardar…' : '✓ Guardado'}
+            {saving ? 'Salvando…' : saved ? '✓ Salvo' : 'Não salvo'}
           </span>
         </div>
 
+        {saveError && <div role="alert" style={{ color: '#fca5a5', marginBottom: '1rem' }}>
+          <p>{saveError}</p>
+          <button onClick={onRetry} disabled={saving} style={styles.secondaryButton}>Tentar salvar novamente</button>
+        </div>}
+        <p style={{ color: '#a0a0c0', fontSize: '0.8rem', marginBottom: '1rem' }}>
+          Pontuação desta partida. Não é avaliação médica nem comprova melhora cognitiva no cotidiano.
+        </p>
+        {!saved && !saving && <button onClick={() => {
+          if (window.confirm('Sair sem salvar esta partida? Os resultados desta tela serão perdidos.')) onDashboard()
+        }} style={styles.secondaryButton}>Sair sem salvar</button>}
         {/* Próxima dificuldade */}
         <div style={{
           background: '#0f0f1a', border: '1px solid #2a2a4a',
@@ -291,8 +303,8 @@ function Results({ results, saving, onReplay, onDashboard }: {
         </div>
 
         <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <button onClick={onDashboard} style={{ ...styles.secondaryButton, flex: 1 }}>Dashboard</button>
-          <button onClick={onReplay}   style={{ ...styles.primaryButton,   flex: 1 }}>Jogar de novo</button>
+          <button onClick={onDashboard} disabled={!saved} style={{ ...styles.secondaryButton, flex: 1 }}>Dashboard</button>
+          <button onClick={onReplay} disabled={!saved} style={{ ...styles.primaryButton,   flex: 1 }}>Jogar de novo</button>
         </div>
       </div>
     </div>
@@ -303,17 +315,21 @@ function Results({ results, saving, onReplay, onDashboard }: {
 
 export function VigiGame() {
   const navigate = useNavigate()
+  const userId = useAuthStore(state => state.user?.id)
+  const recommendation = useVigiaDifficulty(userId)
   const {
     phase, countdown, trialIndex, totalTrials,
-    showStimulus, currentStimulus, results, saving,
-    difficulty, startGame, handleResponse,
+    showStimulus, currentStimulus, results, saving, saved, saveError, retrySave,
+    startGame, handleResponse,
   } = useVigiGame()
 
   return (
     <div style={{ minHeight: '100vh', background: '#0f0f1a', padding: '1rem' }}>
-      {phase === 'instructions' && (
-        <Instructions savedDifficulty={difficulty} onStart={startGame} />
-      )}
+      {phase === 'instructions' && recommendation.loading && <p role="status" style={{ color: '#fff' }}>Carregando seu progresso…</p>}
+      {phase === 'instructions' && !recommendation.loading && <>
+        {recommendation.error && <p role="status" style={{ color: '#fbbf24' }}>Sem conexão com o histórico. Usando o nível salvo neste navegador.</p>}
+        <Instructions key={userId} savedDifficulty={recommendation.difficulty} onStart={startGame} />
+      </>}
       {phase === 'countdown' && <Countdown count={countdown} />}
       {phase === 'playing' && (
         <GameArena
@@ -325,9 +341,9 @@ export function VigiGame() {
       )}
       {phase === 'results' && results && (
         <Results
-          results={results} saving={saving}
-          onReplay={startGame}
-          onDashboard={() => navigate('/')}
+          results={results} saving={saving} saved={saved} saveError={saveError} onRetry={retrySave}
+          onReplay={() => startGame(results.kResult.nextDifficulty)}
+          onDashboard={() => navigate('/') }
         />
       )}
     </div>
@@ -372,3 +388,4 @@ const styles = {
     fontWeight: 700, lineHeight: 1,
   } as React.CSSProperties,
 }
+

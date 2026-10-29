@@ -149,7 +149,7 @@ export function interpretKScore(kScore: number): {
 } {
   if (kScore >= 0.75) return {
     label: 'Excelente',
-    description: 'Atenção de alta qualidade — rápido, preciso e consistente.',
+    description: 'Você respondeu com rapidez, precisão e consistência nesta partida.',
     emoji: '🏆',
     color: '#34d399',
   }
@@ -161,7 +161,7 @@ export function interpretKScore(kScore: number): {
   }
   if (kScore >= 0.30) return {
     label: 'Em desenvolvimento',
-    description: 'A prática regular vai elevar sua consistência.',
+    description: 'Confira seus acertos e tempos nesta partida.',
     emoji: '📊',
     color: '#fbbf24',
   }
@@ -184,3 +184,4 @@ export function calculateXP(kScore: number, difficulty: DifficultyLevel, trials:
   const trialsBonus = Math.min(Math.round(trials * 0.5), 25) // até +25 XP
   return base + kBonus + diffBonus + trialsBonus
 }
+
