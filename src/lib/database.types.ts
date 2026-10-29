@@ -10,6 +10,12 @@
 
 export interface Database {
   public: {
+    Functions: {
+      save_vigia_session: {
+        Args: { p_session_id: string; p_started_at: string; p_difficulty: number; p_k_score: number; p_trials: { [key: string]: string | number | boolean | null }[] }
+        Returns: string
+      }
+    }
     Tables: {
       profiles: {
         Row: {
@@ -132,3 +138,4 @@ export interface Database {
     }
   }
 }
+

@@ -4,13 +4,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { supabase } from '../lib/supabase'
-
-const VIGIA_DIFFICULTY_KEY = 'vigia_difficulty'
-
-function getSavedDifficulty(): number {
-  try { return parseInt(localStorage.getItem(VIGIA_DIFFICULTY_KEY) ?? '3', 10) }
-  catch { return 3 }
-}
+import { useVigiaDifficulty } from '../lib/useVigiaDifficulty'
 
 const DIFFICULTY_LABELS: Record<number, string> = {
   1: 'Iniciante', 2: 'Iniciante', 3: 'Básico',
@@ -25,7 +19,8 @@ export function DashboardPage() {
   const [xpTotal, setXpTotal]  = useState<number>(0)
   const [level, setLevel]      = useState<number>(1)
   const [loading, setLoading]  = useState(true)
-  const vigiaDifficulty        = getSavedDifficulty()
+  const [profileError, setProfileError] = useState(false)
+  const { difficulty: vigiaDifficulty } = useVigiaDifficulty(user?.id)
 
   const name = user?.user_metadata?.full_name?.split(' ')[0]
     ?? user?.email?.split('@')[0]
@@ -36,15 +31,18 @@ export function DashboardPage() {
     if (!user) return
     async function load() {
       try {
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from('profiles')
           .select('xp_total, level')
           .eq('id', user!.id)
           .single()
+        if (error) throw error
         if (data) {
           setXpTotal(data.xp_total ?? 0)
           setLevel(data.level ?? 1)
         }
+      } catch {
+        setProfileError(true)
       } finally {
         setLoading(false)
       }
@@ -100,7 +98,7 @@ export function DashboardPage() {
           }}>
             {loading ? (
               <p style={{ color: '#4a4a6a', fontSize: '0.85rem' }}>A carregar perfil…</p>
-            ) : (
+            ) : profileError ? <p role="alert" style={{ color: '#fbbf24' }}>Não foi possível carregar seu XP. Atualize a página para tentar novamente.</p> : (
               <>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.6rem' }}>
                   <div>
@@ -202,3 +200,4 @@ export function DashboardPage() {
     </div>
   )
 }
+
