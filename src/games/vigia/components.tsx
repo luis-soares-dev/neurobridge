@@ -44,7 +44,7 @@ export function RespondButton({ onRespond, autoFocus = false }: { onRespond: () 
         onRespond()
       }}
     >
-      RESPONDER <span className="tiny" style={{ fontWeight: 600 }}>(Espaço)</span>
+      RESPONDER <span className="tiny key-hint" style={{ fontWeight: 600 }}>(Espaço)</span>
     </button>
   )
 }

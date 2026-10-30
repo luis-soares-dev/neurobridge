@@ -81,7 +81,7 @@ function Arena({ completed, stimulus, onResponse, onPause }: {
     <Screen>
       <div className="arena">
         <div className="arena-top">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '0.25rem 0.5rem', marginBottom: '0.4rem' }}>
             <span className="muted small">{completed} de {TOTAL_TRIALS}</span>
             <Button variant="ghost" onClick={onPause}>Pausar</Button>
           </div>

@@ -200,6 +200,13 @@ h1:focus, h2:focus { outline: none; }
   .arena-controls { grid-area: controls; align-self: start; }
 }
 
+/* Muito estreito e baixo (ex.: zoom de 400%): botão compacto, sem a dica de tecla,
+   para caber com folga independentemente da fonte do sistema. */
+@media (orientation: landscape) and (max-height: 520px) and (max-width: 480px) {
+  .respond-btn { font-size: 0.95rem; padding-inline: 0.5rem; }
+  .respond-btn .key-hint { display: none; }
+}
+
 /* ── Dashboard ──────────────────────────────────────────────────────────── */
 .games-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr)); gap: 0.75rem; }
 .game-card { display: flex; align-items: center; gap: 1rem; width: 100%; min-width: 0; background: var(--surface); border: 1px solid var(--control-border); border-radius: var(--radius); padding: 1rem 1.1rem; text-align: left; }
