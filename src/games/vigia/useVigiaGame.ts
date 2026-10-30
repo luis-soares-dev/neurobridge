@@ -199,9 +199,15 @@ export function useVigiaGame(clock: GameClock = realClock) {
     : phase === 'finished' ? 'results'
     : 'playing'
 
+  // Atalhos ficam suspensos enquanto a tela mostra outra coisa por cima da partida (ex.: a
+  // confirmação de saída): sem isso, Esc retomaria a partida sem nenhum estímulo visível.
+  const shortcutsSuspendedRef = useRef(false)
+  const setShortcutsSuspended = useCallback((value: boolean) => { shortcutsSuspendedRef.current = value }, [])
+
   // Teclado: Espaço responde; Esc pausa e continua.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (shortcutsSuspendedRef.current) return
       if (e.code === 'Space' && viewPhase === 'playing') {
         e.preventDefault()
         if (!e.repeat) handleResponse()
@@ -236,6 +242,6 @@ export function useVigiaGame(clock: GameClock = realClock) {
     unrecoverable: viewPhase === 'results' && results !== null && !saved
       && storeOutcome !== 'stored' && saveError?.kind !== 'rejected',
     retrySave: () => { if (results) void saveResults(results) },
-    startGame, handleResponse, pause, resume, quit, discardResult,
+    startGame, handleResponse, pause, resume, quit, discardResult, setShortcutsSuspended,
   }
 }

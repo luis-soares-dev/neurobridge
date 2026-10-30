@@ -90,7 +90,8 @@ Origem: revisão técnica externa de 30/10/2026, conferida achado por achado con
 - Pausar no intervalo guarda quanto falta dele. Ao continuar, o jogo termina esse intervalo antes do próximo estímulo, e, se não houver mais estímulos, a partida termina. Pausar não encurta intervalos nem o tempo ativo. (Correção da revisão do PR #3: antes, a retomada sempre ia para um novo estímulo, o que fazia o jogo travar no intervalo final e permitia ficar abaixo do tempo mínimo aceito pelo servidor.)
 - A tentativa só começa depois de dois quadros de animação (`requestAnimationFrame`). O primeiro marca o início do tempo; o segundo indica que o navegador seguiu renderizando. É uma aproximação: não certifica que os pixels chegaram à tela. Se não houver quadro em 300 ms, a partida pausa sozinha (interrupção técnica) em vez de registrar omissão.
 - Resposta depois do fim da janela é recusada, não puxada para o limite.
-- Botão Responder: aceita só o botão principal do mouse e funciona com `onClick` para teclado e leitores de tela, sem contar o mesmo toque duas vezes.
+- Botão Responder: aceita só o botão principal do mouse e funciona com `onClick` para teclado e leitores de tela. O clique que encerra um gesto de ponteiro já contado é sempre ignorado, por mais tempo que o botão fique pressionado. (Antes havia uma janela de 1 s; pressionar por mais tempo e soltar sobre outro círculo contava uma segunda resposta. Achado da revisão do Codex.)
+- Com a confirmação de saída ou de reautenticação aberta, os atalhos da partida (Esc, Espaço) ficam suspensos. (Antes, Esc nesse diálogo retomava a partida por trás dele, sem estímulos visíveis. Achado da revisão do Codex.)
 
 **Duração**
 - O app envia só o **tempo ativo** (sem contagem regressiva e sem pausas). Pausas longas não fazem mais a partida ser recusada pelo limite de 1 hora.
@@ -149,7 +150,8 @@ Origem: revisão técnica externa de 30/10/2026, conferida achado por achado con
   - pausa no intervalo final, com partida salva e tempo ativo acima do mínimo;
   - saída sem cópia recuperável (voltar, botão e fechar a aba pedem confirmação);
   - fila cheia sem apagar partidas guardadas; registro ilegível sem derrubar o Dashboard;
-  - "Entrar novamente" com e sem cópia neste aparelho (contraprova: o teste falha na versão anterior).
+  - "Entrar novamente" com e sem cópia neste aparelho (contraprova: o teste falha na versão anterior);
+  - Esc com a confirmação de saída aberta mantém a partida pausada; pressionamento longo do Responder conta uma única resposta (contraprova: os dois falham na versão anterior).
 - Ciclo da partida: 1.500 partidas simuladas com pausas e falta de quadro em pontos sorteados (5 níveis × 300). Em todas: 30 tentativas, 8 alvos, nenhum estímulo vazio e tempo ativo acima do mínimo do servidor. Contraprova: os 8 testes novos falham no código anterior.
 
 ### Critérios de tela (verificados automaticamente em `e2e/layout.e2e.ts`)

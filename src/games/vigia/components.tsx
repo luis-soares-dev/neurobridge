@@ -22,12 +22,26 @@ export function Stimulus({ color, size }: { color: StimulusColor; size: number |
 /**
  * Botão de resposta. Toque e mouse respondem no pointerdown (sem esperar soltar), só com o
  * botão principal; o clique cobre teclado (Enter) e tecnologias assistivas, que geram clique
- * sem pointerdown. Um mesmo toque não conta duas vezes.
+ * sem pointerdown. O clique que encerra um gesto de ponteiro já contado é sempre ignorado,
+ * por mais tempo que o botão fique pressionado: um mesmo gesto nunca conta duas vezes.
  */
 export function RespondButton({ onRespond, autoFocus = false }: { onRespond: () => void; autoFocus?: boolean }) {
-  const lastPointer = useRef(-Infinity)
+  const pointerGesture = useRef(false)
   const ref = useRef<HTMLButtonElement>(null)
   useEffect(() => { if (autoFocus) ref.current?.focus({ preventScroll: true }) }, [autoFocus])
+
+  // Se o ponteiro for solto fora do botão, não há clique para consumir o gesto: limpa depois
+  // do pointerup (o clique, quando existe, chega antes deste temporizador).
+  useEffect(() => {
+    const onUp = () => { window.setTimeout(() => { pointerGesture.current = false }, 0) }
+    window.addEventListener('pointerup', onUp, true)
+    window.addEventListener('pointercancel', onUp, true)
+    return () => {
+      window.removeEventListener('pointerup', onUp, true)
+      window.removeEventListener('pointercancel', onUp, true)
+    }
+  }, [])
+
   return (
     <button
       ref={ref}
@@ -36,11 +50,11 @@ export function RespondButton({ onRespond, autoFocus = false }: { onRespond: () 
       onPointerDown={e => {
         if (!e.isPrimary || e.button !== 0) return
         e.preventDefault()
-        lastPointer.current = performance.now()
+        pointerGesture.current = true
         onRespond()
       }}
       onClick={() => {
-        if (performance.now() - lastPointer.current < 1000) return
+        if (pointerGesture.current) { pointerGesture.current = false; return }
         onRespond()
       }}
     >

@@ -1,5 +1,5 @@
 // Telas do Vigia (as regras ficam em session.ts/engine.ts; o relógio em useVigiaGame).
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { useBlocker, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../features/auth/authStore'
 import { Button, LoadingScreen, Notice, ProgressBar, Screen } from '../../ui/components'
@@ -163,6 +163,11 @@ export function VigiaGame() {
   // navegação possa agir. Sem cópia recuperável, a confirmação vem ANTES do signOut.
   const [confirmReauth, setConfirmReauth] = useState(false)
   const reauth = () => { void signOut().catch(() => {}).finally(() => navigate('/login')) }
+
+  // Com um diálogo por cima, Esc e Espaço não podem agir na partida escondida.
+  const { setShortcutsSuspended } = game
+  const dialogOpen = blocker.state === 'blocked' || confirmReauth
+  useLayoutEffect(() => { setShortcutsSuspended(dialogOpen) }, [dialogOpen, setShortcutsSuspended])
   if (confirmReauth) {
     return (
       <LeaveDialog
