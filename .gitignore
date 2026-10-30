@@ -32,3 +32,7 @@ pnpm-debug.log*
 
 # Cobertura de testes
 coverage/
+
+# Playwright
+test-results/
+playwright-report/

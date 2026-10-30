@@ -1,6 +1,7 @@
-// Roteamento central da aplicação.
+// Roteamento central da aplicação. Usa o roteador "de dados" do React Router,
+// necessário para bloquear a navegação interna no meio de uma partida (useBlocker).
 import { useEffect } from 'react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom'
 import { AuthGuard } from '../features/auth/AuthGuard'
 import { LoginPage } from '../features/auth/LoginPage'
 import { useAuthStore } from '../features/auth/authStore'
@@ -22,6 +23,13 @@ function ConfigErrorScreen({ message }: { message: string }) {
   )
 }
 
+const router = createBrowserRouter([
+  { path: '/login', element: <LoginPage /> },
+  { path: '/', element: <AuthGuard><DashboardPage /></AuthGuard> },
+  { path: '/jogar/vigia', element: <AuthGuard><VigiaGame /></AuthGuard> },
+  { path: '*', element: <Navigate to="/" replace /> },
+])
+
 export default function App() {
   const initialize = useAuthStore(s => s.initialize)
 
@@ -31,15 +39,5 @@ export default function App() {
   }, [initialize])
 
   if (supabaseConfigError) return <ConfigErrorScreen message={supabaseConfigError} />
-
-  return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/" element={<AuthGuard><DashboardPage /></AuthGuard>} />
-        <Route path="/jogar/vigia" element={<AuthGuard><VigiaGame /></AuthGuard>} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
-  )
+  return <RouterProvider router={router} />
 }

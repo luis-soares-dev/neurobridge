@@ -123,6 +123,19 @@ export function computeResults(trials: VigiaTrial[], difficulty: DifficultyLevel
   }
 }
 
+/** Descreve a partida a partir do que aconteceu (acertos, outras cores, tempo), sem julgar a pessoa. */
+export function describeVigia(r: VigiaResults): string {
+  const targets = r.hits + r.misses
+  const others = r.falseAlarms === 0
+    ? 'e não respondeu a outras cores'
+    : `e a ${r.falseAlarms} ${r.falseAlarms === 1 ? 'círculo de outra cor' : 'círculos de outras cores'}`
+  const base = `Você respondeu a ${r.hits} de ${targets} azuis ${others}.`
+  if (r.hits === 0) return base
+  const ratio = r.avgRT / TIMING[r.difficulty].stimulus
+  const pace = ratio < 0.5 ? 'rápidas para este nível' : ratio <= 0.8 ? 'dentro do tempo' : 'perto do limite de tempo'
+  return `${base} Suas respostas foram ${pace}.`
+}
+
 /** Duração mínima plausível de uma partida (sem pausas), em ms. Igual à verificação no SQL. */
 export function minimumDurationMs(difficulty: DifficultyLevel): number {
   const { stimulus, iti } = TIMING[difficulty]

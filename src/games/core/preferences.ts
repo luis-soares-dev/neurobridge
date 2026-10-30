@@ -1,14 +1,15 @@
-// Preferências do jogador neste navegador (som, símbolos de apoio).
+// Preferências do jogador neste navegador (som, símbolos de apoio) e marcas por conta.
 import { create } from 'zustand'
 
 interface Preferences {
-  sound: boolean
+  /** null = ainda não perguntamos; o som só toca depois de a pessoa escolher ligar. */
+  sound: boolean | null
   /** Mostra um símbolo em cada cor, para quem tem dificuldade em distinguir cores. */
   colorSymbols: boolean
 }
 
 const STORAGE_KEY = 'neurobridge:preferences'
-const DEFAULTS: Preferences = { sound: true, colorSymbols: false }
+const DEFAULTS: Preferences = { sound: null, colorSymbols: false }
 
 function load(): Preferences {
   try {
@@ -35,3 +36,14 @@ export const usePreferences = create<PreferencesState>((set, get) => ({
     catch { /* Preferência vale só nesta aba. */ }
   },
 }))
+
+/** Marcas simples por conta neste aparelho (ex.: tutorial já visto). */
+export function readFlag(userId: string | undefined, name: string): boolean {
+  if (!userId) return false
+  try { return localStorage.getItem(`neurobridge:${userId}:${name}`) === '1' } catch { return false }
+}
+
+export function writeFlag(userId: string | undefined, name: string): void {
+  if (!userId) return
+  try { localStorage.setItem(`neurobridge:${userId}:${name}`, '1') } catch { /* sem efeito */ }
+}

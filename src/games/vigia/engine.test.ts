@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { TARGET_COUNT, TIMING, TOTAL_TRIALS, distractorsFor } from './config'
-import { computeResults, generateStimuli, makeTrial, scoreVigia, type VigiaStimulus } from './engine'
+import { computeResults, describeVigia, generateStimuli, makeTrial, scoreVigia, type VigiaStimulus } from './engine'
 import type { DifficultyLevel } from '../core/types'
 
 const LEVELS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as DifficultyLevel[]
@@ -111,5 +111,20 @@ describe('resultados da partida', () => {
     expect(r.hits).toBe(8)
     expect(r.avgRT).toBe(400)
     expect(r.xpEarned).toBe(50 + Math.round(r.score.score * 100) + 2 * 5 + 15)
+  })
+})
+
+describe('descrição da partida', () => {
+  const build = (hits: number, rt: number, fa: number) => computeResults([
+    ...Array.from({ length: 8 }, (_, i) => makeTrial({ color: 'azul', isTarget: true }, i < hits ? rt : null, 3)),
+    ...Array.from({ length: 22 }, (_, i) => makeTrial({ color: 'verde', isTarget: false }, i < fa ? rt : null, 3)),
+  ], 3)
+  it('descreve acertos, outras cores e ritmo a partir do que aconteceu', () => {
+    expect(describeVigia(build(8, 900, 0))).toBe('Você respondeu a 8 de 8 azuis e não respondeu a outras cores. Suas respostas foram perto do limite de tempo.')
+    expect(describeVigia(build(6, 300, 1))).toBe('Você respondeu a 6 de 8 azuis e a 1 círculo de outra cor. Suas respostas foram rápidas para este nível.')
+    expect(describeVigia(build(0, 0, 0))).toBe('Você respondeu a 0 de 8 azuis e não respondeu a outras cores.')
+  })
+  it('8 de 8 no limite da janela não é descrito como rápido', () => {
+    expect(describeVigia(build(8, TIMING[3].stimulus, 0))).not.toMatch(/rápid/)
   })
 })

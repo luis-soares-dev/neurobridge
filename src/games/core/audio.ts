@@ -15,7 +15,7 @@ function getCtx(): AudioContext | null {
 }
 
 function beep(frequency: number, duration: number, type: OscillatorType = 'sine', gainValue = 0.25): void {
-  if (!usePreferences.getState().sound) return
+  if (usePreferences.getState().sound !== true) return
   const ctx = getCtx()
   if (!ctx) return
   try {
