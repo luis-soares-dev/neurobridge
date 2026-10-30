@@ -104,6 +104,7 @@ Origem: revisão técnica externa de 30/10/2026, conferida achado por achado con
 - Erros classificados: sem conexão, tempo esgotado (15 s), sessão expirada, sequência rápida demais, recusada pelo servidor e resposta inesperada. Cada um tem mensagem e ação próprias. Partida recusada oferece "Descartar", não "tentar de novo".
 - A resposta do servidor é validada (intervalos, inteiros, mesmo ID). `null` não vira mais zero.
 - O roteador mudou para `createBrowserRouter`, para usar `useBlocker`. Recarregar, fechar, voltar ou navegar pedem confirmação durante a partida **e** na tela de resultados quando o resultado não foi confirmado pelo servidor nem guardado neste aparelho.
+- "Entrar novamente" (sessão expirada) encerra a sessão, o que fecharia a tela antes de qualquer bloqueio. Por isso, sem cópia recuperável, ele pede confirmação **antes** de sair da conta: "Ficar nesta tela" mantém resultado e conta; "Descartar e entrar novamente" só então sai. Com cópia guardada, vai direto ao login e a partida continua guardada para envio. (Achado da revalidação do PR #3.)
 
 **Contraste e layout** ([index.css](src/index.css))
 - Novos tokens:
@@ -147,7 +148,8 @@ Origem: revisão técnica externa de 30/10/2026, conferida achado por achado con
   - troca de conta em outra aba.
   - pausa no intervalo final, com partida salva e tempo ativo acima do mínimo;
   - saída sem cópia recuperável (voltar, botão e fechar a aba pedem confirmação);
-  - fila cheia sem apagar partidas guardadas; registro ilegível sem derrubar o Dashboard.
+  - fila cheia sem apagar partidas guardadas; registro ilegível sem derrubar o Dashboard;
+  - "Entrar novamente" com e sem cópia neste aparelho (contraprova: o teste falha na versão anterior).
 - Ciclo da partida: 1.500 partidas simuladas com pausas e falta de quadro em pontos sorteados (5 níveis × 300). Em todas: 30 tentativas, 8 alvos, nenhum estímulo vazio e tempo ativo acima do mínimo do servidor. Contraprova: os 8 testes novos falham no código anterior.
 
 ### Critérios de tela (verificados automaticamente em `e2e/layout.e2e.ts`)
@@ -210,6 +212,7 @@ Para criar um jogo novo: crie `src/games/<id>/` com config, engine (e seus teste
 - O XP de participação existe mesmo sem nenhuma resposta (65 a 110 por partida). É uma decisão consciente, a reavaliar depois do piloto; mudar a fórmula exige migração.
 - Interrupções (pausas, falta de quadro) não são registradas no banco; o melhor resultado e o histórico não separam nível, apoios usados nem versão da regra.
 - A partida guardada neste aparelho não é protegida contra adulteração; o servidor revalida tudo ao receber.
+- Se a sessão expirar sozinha (o Supabase encerra a sessão sem clique), não há como pedir confirmação: a área logada fecha. Nesse caso, só a cópia guardada neste aparelho preserva o resultado.
 - Dependências: `npm audit` (30/10/2026) aponta 12 avisos. Em produção são 5: `react-router-dom` 6.26.0 (alto; corrigido na 6.30.6) e `@supabase/supabase-js` (baixo; corrigido na 2.118). Em desenvolvimento são 7: Vite, esbuild e Vitest (inclui 2 críticos; exigem salto de versão principal). Tratamento previsto em PR separado.
 
 Próxima entrega: jogo Lente (memória de trabalho), usando a estrutura de `src/games/core`.

@@ -26,18 +26,19 @@ test('pausa no intervalo depois do último círculo: a partida termina e é salv
   await chooseLevel(page, 10)
   await page.getByRole('button', { name: /Começar nível/ }).click()
   await autoPlay(page)
-  // Assim que o 30º círculo é concluído (intervalo final), pausa e continua.
+  // Assim que o 30º círculo é concluído (intervalo final), pausa na mesma hora, de dentro da
+  // página. A retomada só acontece depois que o teste confirma a tela de pausa (sem corrida).
   await page.evaluate(() => {
-    const press = (code: string) => window.dispatchEvent(new KeyboardEvent('keydown', { code, key: code }))
     const obs = new MutationObserver(() => {
       if (!/\b30 de 30\b/.test(document.body.innerText)) return
       obs.disconnect()
-      press('Escape')
-      setTimeout(() => press('Escape'), 400)
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape' }))
     })
     obs.observe(document.body, { childList: true, subtree: true, characterData: true })
   })
   await expect(page.getByRole('heading', { name: 'Partida pausada' })).toBeVisible({ timeout: 60_000 })
+  expect(supa.saveBodies).toHaveLength(0) // pausou antes de terminar: nada foi enviado ainda
+  await page.keyboard.press('Escape')
   await expect(page.getByText('✓ Salvo na sua conta')).toBeVisible({ timeout: 30_000 })
   const body = supa.saveBodies[0]
   expect(body.p_trials as unknown[]).toHaveLength(30)
@@ -112,4 +113,47 @@ test('registro guardado ilegível não derruba o Dashboard e pode ser limpo', as
   await page.getByRole('button', { name: 'Limpar registros ilegíveis' }).click()
   await expect(page.getByText(/não pôde ser lido/)).toHaveCount(0)
   await expect(page.getByText(/Há 1 partida guardada/)).toBeVisible()
+})
+
+test('sessão expirada sem cópia neste aparelho: "Entrar novamente" confirma antes de sair da conta', async ({ page }) => {
+  await mockSupabase(page, { save: { kind: 'error', status: 401, body: { code: 'PGRST301', message: 'JWT expired', details: null, hint: null } } })
+  await signIn(page)
+  await page.addInitScript(() => {
+    const original = Storage.prototype.setItem
+    Storage.prototype.setItem = function (k: string, v: string) {
+      if (k.includes(':pending')) throw new DOMException('cheio', 'QuotaExceededError')
+      return original.call(this, k, v)
+    }
+  })
+  const logouts: string[] = []
+  page.on('request', r => { if (r.url().includes('/auth/v1/logout')) logouts.push(r.url()) })
+  await playLevel10(page)
+  await expect(page.getByRole('button', { name: 'Entrar novamente' })).toBeVisible({ timeout: 90_000 })
+
+  // Cancelar mantém a tela, o resultado e a conta.
+  await page.getByRole('button', { name: 'Entrar novamente' }).click()
+  await expect(page.getByRole('heading', { name: 'Entrar novamente e descartar o resultado?' })).toBeVisible()
+  await page.getByRole('button', { name: 'Ficar nesta tela' }).click()
+  await expect(page.getByText('Pontuação da partida')).toBeVisible()
+  await expect(page).toHaveURL(/jogar\/vigia/)
+  await page.waitForTimeout(500)
+  expect(logouts).toHaveLength(0)
+
+  // Confirmar descarta e só então sai da conta.
+  await page.getByRole('button', { name: 'Entrar novamente' }).click()
+  await page.getByRole('button', { name: 'Descartar e entrar novamente' }).click()
+  await expect(page).toHaveURL(/\/login$/)
+  await expect(page.getByRole('button', { name: 'Entrar com Google' })).toBeVisible()
+})
+
+test('sessão expirada com cópia neste aparelho: "Entrar novamente" vai direto ao login e a partida continua guardada', async ({ page }) => {
+  await mockSupabase(page, { save: { kind: 'error', status: 401, body: { code: 'PGRST301', message: 'JWT expired', details: null, hint: null } } })
+  await signIn(page)
+  await playLevel10(page)
+  await expect(page.getByRole('button', { name: 'Entrar novamente' })).toBeVisible({ timeout: 90_000 })
+  await page.getByRole('button', { name: 'Entrar novamente' }).click()
+  await expect(page).toHaveURL(/\/login$/)
+  await expect(page.getByRole('heading', { name: /descartar o resultado/ })).toHaveCount(0)
+  const pending = await page.evaluate(id => JSON.parse(localStorage.getItem(`neurobridge:${id}:pending`) ?? '[]').length, USER_ID)
+  expect(pending).toBe(1)
 })

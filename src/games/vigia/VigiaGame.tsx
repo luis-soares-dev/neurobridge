@@ -158,6 +158,21 @@ export function VigiaGame() {
   useEffect(() => { if (blocker.state === 'blocked') pause('navigation') }, [blocker.state, pause])
 
   const goHome = () => navigate('/')
+
+  // "Entrar novamente" encerra a sessão, o que desmonta esta tela antes que o bloqueio de
+  // navegação possa agir. Sem cópia recuperável, a confirmação vem ANTES do signOut.
+  const [confirmReauth, setConfirmReauth] = useState(false)
+  const reauth = () => { void signOut().catch(() => {}).finally(() => navigate('/login')) }
+  if (confirmReauth) {
+    return (
+      <LeaveDialog
+        kind="reauth"
+        onStay={() => setConfirmReauth(false)}
+        onLeave={() => { setConfirmReauth(false); game.discardResult(); reauth() }}
+      />
+    )
+  }
+
   if (blocker.state === 'blocked') {
     return (
       <LeaveDialog
@@ -189,7 +204,7 @@ export function VigiaGame() {
           game={{ ...game, results: game.results }}
           onReplay={() => game.startGame(game.results!.score.nextDifficulty)}
           onHome={goHome}
-          onReauth={() => { void signOut().catch(() => {}).finally(() => navigate('/login')) }}
+          onReauth={() => { if (game.unrecoverable) setConfirmReauth(true); else reauth() }}
         />
       )
   }

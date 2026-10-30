@@ -193,11 +193,26 @@ export function useBeforeUnload(active: boolean) {
 }
 
 /** Confirmação de saída quando a navegação interna é bloqueada. */
-export function LeaveDialog({ kind, onStay, onLeave }: { kind: 'match' | 'result'; onStay: () => void; onLeave: () => void }) {
+const LEAVE_TEXT = {
+  match: {
+    title: 'Sair da partida?', body: 'A partida em andamento não será salva.',
+    stay: 'Continuar jogando', leave: 'Sair sem salvar',
+  },
+  result: {
+    title: 'Sair sem salvar o resultado?',
+    body: 'Este resultado ainda não chegou à sua conta e não pôde ser guardado neste aparelho. Se sair agora, ele será perdido.',
+    stay: 'Ficar e tentar enviar', leave: 'Sair sem salvar',
+  },
+  reauth: {
+    title: 'Entrar novamente e descartar o resultado?',
+    body: 'Entrar novamente encerra a sessão neste aparelho. Este resultado ainda não chegou à sua conta e não pôde ser guardado aqui, então será perdido.',
+    stay: 'Ficar nesta tela', leave: 'Descartar e entrar novamente',
+  },
+} as const
+
+export function LeaveDialog({ kind, onStay, onLeave }: { kind: keyof typeof LEAVE_TEXT; onStay: () => void; onLeave: () => void }) {
   const title = useFocusOnMount<HTMLHeadingElement>()
-  const text = kind === 'match'
-    ? { title: 'Sair da partida?', body: 'A partida em andamento não será salva.', stay: 'Continuar jogando' }
-    : { title: 'Sair sem salvar o resultado?', body: 'Este resultado ainda não chegou à sua conta e não pôde ser guardado neste aparelho. Se sair agora, ele será perdido.', stay: 'Ficar e tentar enviar' }
+  const text = LEAVE_TEXT[kind]
   return (
     <Screen>
       <Card>
@@ -205,7 +220,7 @@ export function LeaveDialog({ kind, onStay, onLeave }: { kind: 'match' | 'result
           <h2 id="sair-titulo" ref={title} tabIndex={-1}>{text.title}</h2>
           <p id="sair-texto" className="muted">{text.body}</p>
           <Button onClick={onStay}>{text.stay}</Button>
-          <Button variant="secondary" onClick={onLeave}>Sair sem salvar</Button>
+          <Button variant="secondary" onClick={onLeave}>{text.leave}</Button>
         </div>
       </Card>
     </Screen>
