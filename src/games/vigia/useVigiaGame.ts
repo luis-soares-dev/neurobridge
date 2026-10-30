@@ -4,11 +4,11 @@ import { useAuthStore } from '../../features/auth/authStore'
 import { classifySaveError, type SaveErrorKind } from '../../services/errors'
 import { playFalseAlarmSound, playHitSound } from '../core/audio'
 import { normalizeDifficulty, readDifficulty } from '../core/difficulty'
-import { listPending, removePending } from '../core/pendingResults'
+import { removePending, type StoreOutcome } from '../core/pendingResults'
 import type { DifficultyLevel } from '../core/types'
 import { TIMING, TOTAL_TRIALS } from './config'
 import { computeResults, generateStimuli, type VigiaResults } from './engine'
-import { persistSession, type SessionInfo } from './persistSession'
+import { buildPayload, sendPending, storePending, type SessionInfo } from './persistSession'
 import { createSession, reduceSession, visibleStimulus, type PauseReason, type SessionEvent, type SessionState } from './session'
 
 /** Relógio substituível (testes e diagnóstico). Usa sempre o tempo monotônico. */
@@ -43,8 +43,8 @@ export function useVigiaGame(clock: GameClock = realClock) {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState<SaveFailure | null>(null)
-  /** A partida pendente está guardada neste aparelho (pode sair e enviar depois). */
-  const [storedLocally, setStoredLocally] = useState(false)
+  /** Resultado de guardar a partida neste aparelho, conhecido antes do envio. */
+  const [storeOutcome, setStoreOutcome] = useState<StoreOutcome | null>(null)
 
   const sessionRef = useRef<SessionState | null>(null)
   const infoRef = useRef<SessionInfo>({ id: '', userId: '', durationMs: 0 })
@@ -64,7 +64,7 @@ export function useVigiaGame(clock: GameClock = realClock) {
     const later = (ms: number, make: () => SessionEvent) => {
       timersRef.current.push(clock.setTimeout(() => dispatchRef.current(make()), ms))
     }
-    const { stimulus, iti } = TIMING[s.difficulty]
+    const { stimulus } = TIMING[s.difficulty]
     switch (s.phase) {
       case 'countdown':
         later(1000, () => ({ type: 'tick', at: clock.now() }))
@@ -78,7 +78,7 @@ export function useVigiaGame(clock: GameClock = realClock) {
         break
       }
       case 'gap':
-        later(iti, () => ({ type: 'gapEnd', at: clock.now() }))
+        later(s.gapLeft, () => ({ type: 'gapEnd', at: clock.now() }))
         break
     }
   }, [clearTimers, clock])
@@ -94,8 +94,9 @@ export function useVigiaGame(clock: GameClock = realClock) {
   }, [schedule])
   dispatchRef.current = dispatch
 
-  // Apresentação: depois que o estímulo entra no DOM, espera dois quadros. O primeiro marca
-  // o início (é o quadro em que ele é pintado); o segundo confirma que a pintura aconteceu.
+  // Apresentação: depois que o estímulo entra no DOM, espera dois quadros de animação. O
+  // primeiro marca o início (é o quadro que deve pintá-lo); o segundo indica que o navegador
+  // seguiu renderizando. É uma aproximação: não certifica que os pixels chegaram à tela.
   const presentingKey = session?.phase === 'presenting' ? `${session.trials.length}:${session.interruptions}` : null
   useLayoutEffect(() => {
     if (!presentingKey) return
@@ -112,8 +113,10 @@ export function useVigiaGame(clock: GameClock = realClock) {
     savingRef.current = true
     setSaving(true)
     setSaveError(null)
+    // Guarda neste aparelho antes de enviar: a tela sabe na hora se há cópia recuperável.
+    setStoreOutcome(storePending(value, infoRef.current))
     try {
-      const official = await persistSession(value, infoRef.current)
+      const official = await sendPending(infoRef.current.userId, buildPayload(value, infoRef.current))
       // O servidor é a fonte oficial de pontuação e XP.
       setResults(r => r && {
         ...r,
@@ -122,8 +125,6 @@ export function useVigiaGame(clock: GameClock = realClock) {
       })
       setSaved(true)
     } catch (error) {
-      const { id, userId: owner } = infoRef.current
-      setStoredLocally(listPending(owner).some(p => p.sessionId === id))
       setSaveError({ kind: classifySaveError(error) })
     } finally {
       savingRef.current = false
@@ -151,7 +152,7 @@ export function useVigiaGame(clock: GameClock = realClock) {
     setResults(null)
     setSaved(false)
     setSaveError(null)
-    setStoredLocally(false)
+    setStoreOutcome(null)
     schedule(s)
   }, [difficulty, userId, schedule])
 
@@ -185,7 +186,7 @@ export function useVigiaGame(clock: GameClock = realClock) {
     quit()
     setResults(null)
     setSaveError(null)
-    setStoredLocally(false)
+    setStoreOutcome(null)
   }, [quit])
 
   useEffect(() => clearTimers, [clearTimers])
@@ -228,8 +229,12 @@ export function useVigiaGame(clock: GameClock = realClock) {
     stimulus: session ? visibleStimulus(session) : null,
     pauseReason: session?.pauseReason ?? null,
     interruptions: session?.interruptions ?? 0,
-    results, saving, saved, saveError, storedLocally, difficulty,
+    results, saving, saved, saveError, difficulty, storeOutcome,
+    storedLocally: storeOutcome === 'stored',
     inProgress: viewPhase === 'countdown' || viewPhase === 'playing' || viewPhase === 'paused',
+    /** Resultado que se perderia ao sair: não confirmado pelo servidor e sem cópia neste aparelho. */
+    unrecoverable: viewPhase === 'results' && results !== null && !saved
+      && storeOutcome !== 'stored' && saveError?.kind !== 'rejected',
     retrySave: () => { if (results) void saveResults(results) },
     startGame, handleResponse, pause, resume, quit, discardResult,
   }

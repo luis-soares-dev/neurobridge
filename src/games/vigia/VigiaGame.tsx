@@ -105,8 +105,7 @@ function Results({ game, onReplay, onHome, onReauth }: {
   game: ReturnType<typeof useVigiaGame> & { results: VigiaResults }
   onReplay: () => void; onHome: () => void; onReauth: () => void
 }) {
-  const { results, saving, saved, saveError, storedLocally, interruptions } = game
-  const canLeave = saved || storedLocally || saveError?.kind === 'rejected'
+  const { results, saving, saved, saveError, storedLocally, storeOutcome, interruptions, unrecoverable } = game
   return (
     <Screen>
       <section className="card card-wide">
@@ -122,7 +121,7 @@ function Results({ game, onReplay, onHome, onReauth }: {
           {interruptions > 0 && ` ${interruptions} ${interruptions === 1 ? 'tentativa foi refeita' : 'tentativas foram refeitas'} por causa de pausa.`}
         </p>
         <SaveStatus
-          xp={results.xpEarned} saving={saving} saved={saved} error={saveError?.kind ?? null} storedLocally={storedLocally}
+          xp={results.xpEarned} saving={saving} saved={saved} error={saveError?.kind ?? null} storeOutcome={storeOutcome}
           onRetry={game.retrySave} onReauth={onReauth} onDiscard={() => { game.discardResult(); onHome() }}
         />
         <div style={{ marginBottom: '1rem' }}>
@@ -131,14 +130,10 @@ function Results({ game, onReplay, onHome, onReauth }: {
         </div>
         <div className="stack">
           <div className="row">
-            <Button variant="secondary" onClick={onHome} disabled={!canLeave}>Início</Button>
+            {/* Sair sem cópia recuperável passa pela confirmação de saída (useBlocker). */}
+            <Button variant="secondary" onClick={onHome}>{unrecoverable ? 'Sair sem salvar' : 'Início'}</Button>
             <Button onClick={onReplay} disabled={!(saved || storedLocally)}>Jogar de novo</Button>
           </div>
-          {!canLeave && !saving && (
-            <Button variant="ghost" style={{ width: '100%' }} onClick={() => {
-              if (window.confirm('Sair sem salvar esta partida? O resultado desta tela será perdido.')) onHome()
-            }}>Sair sem salvar</Button>
-          )}
           <p className="subtle tiny">A pontuação mede o desempenho nesta partida. Não é avaliação médica ou psicológica.</p>
         </div>
       </section>
@@ -153,17 +148,24 @@ export function VigiaGame() {
   const recommendation = useRecommendedDifficulty(userId, 'vigia')
   const game = useVigiaGame()
   const [showTutorial, setShowTutorial] = useState(() => !readFlag(userId, TUTORIAL_FLAG))
-  useBeforeUnload(game.inProgress)
-
-  // Navegação interna (voltar, links) no meio da partida pede confirmação.
+  // Sair (recarregar, fechar, voltar, navegar) pede confirmação durante a partida e quando
+  // o resultado não foi confirmado pelo servidor nem guardado neste aparelho.
+  const guard = game.inProgress || game.unrecoverable
+  useBeforeUnload(guard)
   const blocker = useBlocker(({ currentLocation, nextLocation }) =>
-    game.inProgress && currentLocation.pathname !== nextLocation.pathname)
+    guard && currentLocation.pathname !== nextLocation.pathname)
   const { pause } = game
   useEffect(() => { if (blocker.state === 'blocked') pause('navigation') }, [blocker.state, pause])
 
   const goHome = () => navigate('/')
   if (blocker.state === 'blocked') {
-    return <LeaveDialog onStay={() => blocker.reset()} onLeave={() => { game.quit(); blocker.proceed() }} />
+    return (
+      <LeaveDialog
+        kind={game.inProgress ? 'match' : 'result'}
+        onStay={() => blocker.reset()}
+        onLeave={() => { game.quit(); blocker.proceed() }}
+      />
+    )
   }
 
   switch (game.phase) {

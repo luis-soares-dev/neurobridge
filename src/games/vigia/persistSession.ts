@@ -4,7 +4,7 @@ import { getConfirmedUserId } from '../../services/auth'
 import { SaveError } from '../../services/errors'
 import { saveVigiaSession, type SavedSession, type SaveVigiaPayload } from '../../services/sessions'
 import { writeDifficulty } from '../core/difficulty'
-import { removePending, savePending, type PendingResult } from '../core/pendingResults'
+import { PENDING_VERSION, removePending, savePending, type PendingResult, type StoreOutcome } from '../core/pendingResults'
 import type { VigiaResults } from './engine'
 
 export interface SessionInfo {
@@ -23,9 +23,13 @@ export function buildPayload(results: VigiaResults, session: SessionInfo): SaveV
   }
 }
 
-/** Guarda a partida neste aparelho até a confirmação. Retorna false se não for possível guardar. */
-export function storePending(results: VigiaResults, session: SessionInfo, now = Date.now()): boolean {
+/**
+ * Guarda a partida neste aparelho até a confirmação, ANTES do envio, para que a tela saiba
+ * de imediato se há cópia recuperável ('stored'), se a fila está cheia ou se o aparelho não deixou.
+ */
+export function storePending(results: VigiaResults, session: SessionInfo, now = Date.now()): StoreOutcome {
   const item: PendingResult<SaveVigiaPayload> = {
+    v: PENDING_VERSION,
     gameId: 'vigia',
     sessionId: session.id,
     createdAt: now,

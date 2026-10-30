@@ -86,8 +86,9 @@ Origem: revisão técnica externa de 30/10/2026, conferida achado por achado con
 **Ciclo da partida** ([session.ts](src/games/vigia/session.ts), [useVigiaGame.ts](src/games/vigia/useVigiaGame.ts))
 - Fases explícitas: contagem, apresentação, exposição, intervalo, pausa e concluída.
 - Uma tentativa concluída nunca é apagada.
-- Pausar com um círculo na tela descarta só aquela tentativa e devolve o estímulo ao conjunto restante, que é reembaralhado. A partida continua com 30 tentativas e 8 alvos. Exceção conhecida: se for o último estímulo, ele volta.
-- A tentativa só começa depois de dois quadros desenhados. O primeiro marca o início do tempo; o segundo confirma a pintura. Se a tela não for desenhada em 300 ms, a partida pausa sozinha (interrupção técnica) em vez de registrar omissão.
+- Pausar com um círculo na tela descarta só aquela tentativa e devolve o estímulo ao conjunto restante, que é reembaralhado. A partida continua com 30 tentativas e 8 alvos. Exceção conhecida: se for o último estímulo, ele volta. O reembaralhamento evita a repetição imediata, mas **não é proteção contra manipulação de desempenho**: ainda é possível pausar durante um estímulo para descartá-lo.
+- Pausar no intervalo guarda quanto falta dele. Ao continuar, o jogo termina esse intervalo antes do próximo estímulo, e, se não houver mais estímulos, a partida termina. Pausar não encurta intervalos nem o tempo ativo. (Correção da revisão do PR #3: antes, a retomada sempre ia para um novo estímulo, o que fazia o jogo travar no intervalo final e permitia ficar abaixo do tempo mínimo aceito pelo servidor.)
+- A tentativa só começa depois de dois quadros de animação (`requestAnimationFrame`). O primeiro marca o início do tempo; o segundo indica que o navegador seguiu renderizando. É uma aproximação: não certifica que os pixels chegaram à tela. Se não houver quadro em 300 ms, a partida pausa sozinha (interrupção técnica) em vez de registrar omissão.
 - Resposta depois do fim da janela é recusada, não puxada para o limite.
 - Botão Responder: aceita só o botão principal do mouse e funciona com `onClick` para teclado e leitores de tela, sem contar o mesmo toque duas vezes.
 
@@ -96,11 +97,13 @@ Origem: revisão técnica externa de 30/10/2026, conferida achado por achado con
 - O banco não mudou. A coluna `started_at` continua sendo "agora − tempo ativo", e não o início real com pausas.
 
 **Salvamento recuperável** ([pendingResults.ts](src/games/core/pendingResults.ts), [errors.ts](src/services/errors.ts))
-- A partida é guardada neste aparelho, por conta, antes do envio, com validade de 7 dias. Ela sai de lá só depois da confirmação do servidor.
-- O Dashboard oferece "Enviar agora" para partidas pendentes. O reenvio usa o mesmo ID, sem duplicar XP.
+- A partida é guardada neste aparelho, por conta, **antes** do envio, com validade de 7 dias. A tela sabe na hora se há cópia recuperável. Ela sai de lá só depois da confirmação do servidor.
+- No máximo 10 partidas guardadas. Com a fila cheia, a nova partida **não** é guardada, nenhuma das anteriores é apagada e a tela avisa. (Antes, a mais antiga era descartada sem aviso.)
+- Cada registro guardado tem versão e é validado por inteiro (jogo, ID, data, resumo, dados e coerência do ID). Registros ilegíveis ficam isolados, não travam a tela, e o Dashboard oferece "Limpar registros ilegíveis".
+- O Dashboard oferece "Enviar agora" para partidas pendentes e mostra até quando cada uma fica guardada. O reenvio usa o mesmo ID, sem duplicar XP.
 - Erros classificados: sem conexão, tempo esgotado (15 s), sessão expirada, sequência rápida demais, recusada pelo servidor e resposta inesperada. Cada um tem mensagem e ação próprias. Partida recusada oferece "Descartar", não "tentar de novo".
 - A resposta do servidor é validada (intervalos, inteiros, mesmo ID). `null` não vira mais zero.
-- O roteador mudou para `createBrowserRouter`, para usar `useBlocker`. Voltar ou navegar no meio da partida pede confirmação.
+- O roteador mudou para `createBrowserRouter`, para usar `useBlocker`. Recarregar, fechar, voltar ou navegar pedem confirmação durante a partida **e** na tela de resultados quando o resultado não foi confirmado pelo servidor nem guardado neste aparelho.
 
 **Contraste e layout** ([index.css](src/index.css))
 - Novos tokens:
@@ -142,6 +145,10 @@ Origem: revisão técnica externa de 30/10/2026, conferida achado por achado con
   - partida recusada; sessão expirada;
   - voltar no meio da partida;
   - troca de conta em outra aba.
+  - pausa no intervalo final, com partida salva e tempo ativo acima do mínimo;
+  - saída sem cópia recuperável (voltar, botão e fechar a aba pedem confirmação);
+  - fila cheia sem apagar partidas guardadas; registro ilegível sem derrubar o Dashboard.
+- Ciclo da partida: 1.500 partidas simuladas com pausas e falta de quadro em pontos sorteados (5 níveis × 300). Em todas: 30 tentativas, 8 alvos, nenhum estímulo vazio e tempo ativo acima do mínimo do servidor. Contraprova: os 8 testes novos falham no código anterior.
 
 ### Critérios de tela (verificados automaticamente em `e2e/layout.e2e.ts`)
 
@@ -203,5 +210,6 @@ Para criar um jogo novo: crie `src/games/<id>/` com config, engine (e seus teste
 - O XP de participação existe mesmo sem nenhuma resposta (65 a 110 por partida). É uma decisão consciente, a reavaliar depois do piloto; mudar a fórmula exige migração.
 - Interrupções (pausas, falta de quadro) não são registradas no banco; o melhor resultado e o histórico não separam nível, apoios usados nem versão da regra.
 - A partida guardada neste aparelho não é protegida contra adulteração; o servidor revalida tudo ao receber.
+- Dependências: `npm audit` (30/10/2026) aponta 12 avisos. Em produção são 5: `react-router-dom` 6.26.0 (alto; corrigido na 6.30.6) e `@supabase/supabase-js` (baixo; corrigido na 2.118). Em desenvolvimento são 7: Vite, esbuild e Vitest (inclui 2 críticos; exigem salto de versão principal). Tratamento previsto em PR separado.
 
 Próxima entrega: jogo Lente (memória de trabalho), usando a estrutura de `src/games/core`.

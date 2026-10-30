@@ -33,6 +33,12 @@ export interface SessionState {
   activeSince: number | null
   interruptions: number
   pauseReason: PauseReason | null
+  /** Para onde a partida volta depois da contagem: um novo estímulo ou o resto do intervalo. */
+  resumeTo: 'presenting' | 'gap'
+  /** Quanto falta do intervalo atual (ms). Preservado na pausa: pausar não encurta intervalos. */
+  gapLeft: number
+  /** Momento em que o trecho atual do intervalo começou a correr. */
+  gapStart: number | null
 }
 
 export type SessionEvent =
@@ -50,14 +56,23 @@ export function createSession(stimuli: VigiaStimulus[], difficulty: DifficultyLe
     difficulty, phase: 'countdown', countdown: COUNTDOWN_FROM,
     queue: [...stimuli], trials: [], exposureStart: null, response: null,
     activeMs: 0, activeSince: null, interruptions: 0, pauseReason: null,
+    resumeTo: 'presenting', gapLeft: 0, gapStart: null,
   }
 }
 
 const stopClock = (s: SessionState, at: number) =>
   s.activeSince === null ? s.activeMs : s.activeMs + Math.max(0, at - s.activeSince)
 
+/** Fim do intervalo (ou da partida, se não houver mais estímulos). */
+function afterGap(s: SessionState, at: number): SessionState {
+  const base = { ...s, gapLeft: 0, gapStart: null }
+  if (s.queue.length > 0) return { ...base, phase: 'presenting' }
+  return { ...base, phase: 'finished', activeMs: stopClock(s, at), activeSince: null }
+}
+
 function interrupt(s: SessionState, at: number, reason: PauseReason, random: Random): SessionState {
   const midTrial = s.phase === 'presenting' || s.phase === 'exposure'
+  const inGap = s.phase === 'gap'
   return {
     ...s,
     phase: 'paused',
@@ -69,15 +84,23 @@ function interrupt(s: SessionState, at: number, reason: PauseReason, random: Ran
     response: null,
     activeMs: stopClock(s, at),
     activeSince: null,
+    // No intervalo, guarda quanto falta; ao continuar, o intervalo termina antes do próximo estímulo.
+    resumeTo: inGap ? 'gap' : 'presenting',
+    gapLeft: inGap ? Math.max(0, s.gapLeft - (at - (s.gapStart ?? at))) : 0,
+    gapStart: null,
   }
 }
 
 export function reduceSession(s: SessionState, e: SessionEvent): SessionState {
   switch (e.type) {
-    case 'tick':
+    case 'tick': {
       if (s.phase !== 'countdown') return s
       if (s.countdown > 1) return { ...s, countdown: s.countdown - 1 }
-      return { ...s, countdown: 0, phase: 'presenting', activeSince: e.at }
+      const running = { ...s, countdown: 0, activeSince: e.at }
+      if (s.resumeTo === 'gap') return { ...running, phase: 'gap', gapStart: e.at }
+      // Sem estímulos restantes não há o que apresentar: a partida termina.
+      return s.queue.length > 0 ? { ...running, phase: 'presenting' } : afterGap(running, e.at)
+    }
 
     case 'frameShown':
       if (s.phase !== 'presenting') return s
@@ -95,21 +118,21 @@ export function reduceSession(s: SessionState, e: SessionEvent): SessionState {
     }
 
     case 'exposureEnd': {
-      if (s.phase !== 'exposure') return s
+      if (s.phase !== 'exposure' || s.queue.length === 0) return s
       const [current, ...rest] = s.queue
       return {
         ...s, phase: 'gap', queue: rest, exposureStart: null, response: null,
         trials: [...s.trials, makeTrial(current, s.response, s.difficulty)],
+        gapLeft: TIMING[s.difficulty].iti, gapStart: e.at,
       }
     }
 
     case 'gapEnd':
-      if (s.phase !== 'gap') return s
-      if (s.queue.length > 0) return { ...s, phase: 'presenting' }
-      return { ...s, phase: 'finished', activeMs: stopClock(s, e.at), activeSince: null }
+      return s.phase === 'gap' ? afterGap(s, e.at) : s
 
     case 'pause':
       if (s.phase === 'paused' || s.phase === 'finished') return s
+      // Na contagem nada está correndo; o destino da retomada continua o mesmo.
       if (s.phase === 'countdown') return { ...s, phase: 'paused', pauseReason: e.reason }
       return interrupt(s, e.at, e.reason, e.random)
 

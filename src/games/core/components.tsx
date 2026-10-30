@@ -1,6 +1,7 @@
 // Telas e controles compartilhados pelos jogos.
 import { useEffect, useRef, type ReactNode } from 'react'
 import { SAVE_ERROR_MESSAGES, type SaveErrorKind } from '../../services/errors'
+import { MAX_PENDING, type StoreOutcome } from './pendingResults'
 import { Button, Card, Notice, Screen, Toggle } from '../../ui/components'
 import { DIFFICULTY_LABELS, explainDecision, formatPoints, LEVEL_DOWN_BELOW, LEVEL_UP_ABOVE, MAX_DIFFICULTY, MIN_DIFFICULTY } from './difficulty'
 import { usePreferences } from './preferences'
@@ -141,10 +142,11 @@ export function LevelDecision({ score, current, next }: { score: number; current
   )
 }
 
-export function SaveStatus({ xp, saving, saved, error, storedLocally, onRetry, onReauth, onDiscard }: {
-  xp: number; saving: boolean; saved: boolean; error: SaveErrorKind | null; storedLocally: boolean
+export function SaveStatus({ xp, saving, saved, error, storeOutcome, onRetry, onReauth, onDiscard }: {
+  xp: number; saving: boolean; saved: boolean; error: SaveErrorKind | null; storeOutcome: StoreOutcome | null
   onRetry: () => void; onReauth: () => void; onDiscard: () => void
 }) {
+  const storedLocally = storeOutcome === 'stored'
   const status = saving ? 'Salvando…' : saved ? '✓ Salvo na sua conta' : storedLocally ? 'Guardado neste aparelho' : 'Não salvo'
   return (
     <div className="stack" style={{ marginBottom: '0.75rem' }}>
@@ -158,7 +160,13 @@ export function SaveStatus({ xp, saving, saved, error, storedLocally, onRetry, o
       {error && (
         <div role="alert" className="notice notice-error">
           <p>{SAVE_ERROR_MESSAGES[error]}</p>
-          {!storedLocally && error !== 'rejected' && (
+          {storeOutcome === 'full' && error !== 'rejected' && (
+            <p className="tiny">
+              Já há {MAX_PENDING} partidas aguardando envio neste aparelho, então esta não pôde ser guardada.
+              Envie-a antes de sair desta tela (ou envie as pendentes pela tela inicial).
+            </p>
+          )}
+          {storeOutcome === 'unavailable' && error !== 'rejected' && (
             <p className="tiny">Este aparelho não permitiu guardar a partida: envie antes de sair desta tela.</p>
           )}
           <div className="row">
@@ -184,16 +192,19 @@ export function useBeforeUnload(active: boolean) {
   }, [active])
 }
 
-/** Confirmação de saída quando a navegação interna é bloqueada no meio de uma partida. */
-export function LeaveDialog({ onStay, onLeave }: { onStay: () => void; onLeave: () => void }) {
+/** Confirmação de saída quando a navegação interna é bloqueada. */
+export function LeaveDialog({ kind, onStay, onLeave }: { kind: 'match' | 'result'; onStay: () => void; onLeave: () => void }) {
   const title = useFocusOnMount<HTMLHeadingElement>()
+  const text = kind === 'match'
+    ? { title: 'Sair da partida?', body: 'A partida em andamento não será salva.', stay: 'Continuar jogando' }
+    : { title: 'Sair sem salvar o resultado?', body: 'Este resultado ainda não chegou à sua conta e não pôde ser guardado neste aparelho. Se sair agora, ele será perdido.', stay: 'Ficar e tentar enviar' }
   return (
     <Screen>
       <Card>
         <div className="stack" role="alertdialog" aria-labelledby="sair-titulo" aria-describedby="sair-texto">
-          <h2 id="sair-titulo" ref={title} tabIndex={-1}>Sair da partida?</h2>
-          <p id="sair-texto" className="muted">A partida em andamento não será salva.</p>
-          <Button onClick={onStay}>Continuar jogando</Button>
+          <h2 id="sair-titulo" ref={title} tabIndex={-1}>{text.title}</h2>
+          <p id="sair-texto" className="muted">{text.body}</p>
+          <Button onClick={onStay}>{text.stay}</Button>
           <Button variant="secondary" onClick={onLeave}>Sair sem salvar</Button>
         </div>
       </Card>
