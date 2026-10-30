@@ -1,3 +1,4 @@
+-- SUBSTITUÍDO por migrations/002_server_scoring_and_rls.sql (pontuação calculada no servidor). Mantido como histórico.
 -- Aplicar após 001_init.sql. Sem mudanças nas tabelas existentes.
 -- Operação atômica: qualquer erro desfaz sessão, eventos, XP e progresso.
 BEGIN;
