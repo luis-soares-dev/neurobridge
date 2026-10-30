@@ -32,12 +32,16 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   initialize: () => {
-    supabase.auth.getSession()
-      .then(({ data: { session } }) => set({ user: session?.user ?? null, loading: false }))
-      .catch(() => set({ user: null, loading: false }))
+    // Se um evento de login/logout chegar antes da leitura inicial, ele é mais recente:
+    // a resposta atrasada de getSession() não pode sobrescrevê-lo.
+    let eventSeen = false
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      eventSeen = true
       set({ user: session?.user ?? null, loading: false })
     })
+    supabase.auth.getSession()
+      .then(({ data: { session } }) => { if (!eventSeen) set({ user: session?.user ?? null, loading: false }) })
+      .catch(() => { if (!eventSeen) set({ user: null, loading: false }) })
     return () => subscription.unsubscribe()
   },
 }))

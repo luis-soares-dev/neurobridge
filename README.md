@@ -17,6 +17,7 @@ npm run dev
 | `npm run dev` | servidor de desenvolvimento |
 | `npm test` | testes em modo observação |
 | `npm run check` | typecheck + lint + testes + build (o mesmo da CI) |
+| `npm run e2e` | testes de ponta a ponta no navegador (Playwright; usa o Chrome instalado ou `npx playwright install chromium`) |
 
 Os testes de banco (`supabase/tests`) rodam num PostgreSQL local em memória (PGlite). Não precisam de Supabase nem de internet.
 

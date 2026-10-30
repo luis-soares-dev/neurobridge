@@ -34,9 +34,13 @@ export function levelFromXp(xpTotal: number): { level: number; xpInLevel: number
   return { level, xpInLevel, percent: Math.round((xpInLevel / XP_PER_LEVEL) * 100) }
 }
 
-export function interpretScore(score: number): { label: string; description: string; emoji: string; tone: 'great' | 'good' | 'mid' | 'low' } {
-  if (score >= 0.75) return { label: 'Excelente', description: 'Você foi preciso e rápido nesta partida.', emoji: '🏆', tone: 'great' }
-  if (score >= 0.5) return { label: 'Bom', description: 'Desempenho sólido, com espaço para crescer.', emoji: '🎯', tone: 'good' }
-  if (score >= 0.3) return { label: 'Em progresso', description: 'Confira seus acertos e tempos abaixo.', emoji: '📊', tone: 'mid' }
-  return { label: 'Continue praticando', description: 'O nível se ajusta para acompanhar o seu ritmo.', emoji: '🔄', tone: 'low' }
+/**
+ * Rótulo geral da partida. A descrição do que aconteceu vem de cada jogo
+ * (acertos, erros e tempo), não é deduzida só da nota.
+ */
+export function interpretScore(score: number): { label: string; emoji: string; tone: 'great' | 'good' | 'mid' | 'low' } {
+  if (score >= 0.75) return { label: 'Excelente', emoji: '🏆', tone: 'great' }
+  if (score >= 0.5) return { label: 'Bom', emoji: '🎯', tone: 'good' }
+  if (score >= 0.3) return { label: 'Em progresso', emoji: '📊', tone: 'mid' }
+  return { label: 'Continue praticando', emoji: '🔄', tone: 'low' }
 }

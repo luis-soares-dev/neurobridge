@@ -1,16 +1,26 @@
 // Telas e controles compartilhados pelos jogos.
-import { useEffect, type ReactNode } from 'react'
-import { Button, Card, Screen, Toggle } from '../../ui/components'
-import { DIFFICULTY_LABELS, LEVEL_DOWN_BELOW, LEVEL_UP_ABOVE, MAX_DIFFICULTY, MIN_DIFFICULTY } from './difficulty'
+import { useEffect, useRef, type ReactNode } from 'react'
+import { SAVE_ERROR_MESSAGES, type SaveErrorKind } from '../../services/errors'
+import { Button, Card, Notice, Screen, Toggle } from '../../ui/components'
+import { DIFFICULTY_LABELS, explainDecision, formatPoints, LEVEL_DOWN_BELOW, LEVEL_UP_ABOVE, MAX_DIFFICULTY, MIN_DIFFICULTY } from './difficulty'
 import { usePreferences } from './preferences'
-import { interpretScore, scoreToPercent } from './score'
+import { interpretScore } from './score'
 import type { DifficultyLevel } from './types'
+
+/** Leva o foco ao título quando a tela aparece (leitores de tela anunciam a nova tela). */
+export function useFocusOnMount<T extends HTMLElement>() {
+  const ref = useRef<T>(null)
+  useEffect(() => { ref.current?.focus() }, [])
+  return ref
+}
 
 export function Countdown({ count, label = 'Prepare-se…' }: { count: number; label?: string }) {
   return (
     <Screen>
       <p className="muted">{label}</p>
-      <div aria-live="assertive" style={{ fontSize: '6rem', fontWeight: 900, color: 'var(--primary)', lineHeight: 1 }}>{count}</div>
+      <div aria-hidden style={{ fontSize: 'clamp(4rem, 18dvh, 6rem)', fontWeight: 900, color: 'var(--primary)', lineHeight: 1 }}>{count}</div>
+      {/* Anúncio único e educado, sem interromper a cada número. */}
+      <p className="sr-only" aria-live="polite">A partida começa em 3 segundos.</p>
     </Screen>
   )
 }
@@ -18,14 +28,14 @@ export function Countdown({ count, label = 'Prepare-se…' }: { count: number; l
 export function DifficultyPicker({ value, onChange, detail }: { value: DifficultyLevel; onChange: (d: DifficultyLevel) => void; detail?: ReactNode }) {
   const set = (n: number) => onChange(Math.min(MAX_DIFFICULTY, Math.max(MIN_DIFFICULTY, n)) as DifficultyLevel)
   return (
-    <div className="panel">
-      <p className="eyebrow" style={{ marginBottom: '0.75rem' }}>Nível de dificuldade</p>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem', marginBottom: '0.75rem' }}>
+    <div className="panel center">
+      <p className="eyebrow" id="nivel-titulo" style={{ marginBottom: '0.6rem' }}>Nível de dificuldade</p>
+      <div role="group" aria-labelledby="nivel-titulo" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem', marginBottom: '0.6rem' }}>
         <Button variant="round" onClick={() => set(value - 1)} disabled={value <= MIN_DIFFICULTY} aria-label="Diminuir nível">−</Button>
-        <div style={{ minWidth: 120 }} aria-live="polite">
+        <div style={{ minWidth: 0, flex: '0 1 9rem' }} aria-live="polite">
           <span style={{ fontSize: '1.6rem', fontWeight: 800 }}>{value}</span>
           <span className="subtle"> / {MAX_DIFFICULTY}</span>
-          <p style={{ color: 'var(--primary)', fontSize: '0.82rem', fontWeight: 700 }}>{DIFFICULTY_LABELS[value]}</p>
+          <p style={{ color: 'var(--primary)', fontSize: '0.9rem', fontWeight: 700 }}>{DIFFICULTY_LABELS[value]}</p>
           {detail && <p className="subtle tiny">{detail}</p>}
         </div>
         <Button variant="round" onClick={() => set(value + 1)} disabled={value >= MAX_DIFFICULTY} aria-label="Aumentar nível">+</Button>
@@ -36,17 +46,32 @@ export function DifficultyPicker({ value, onChange, detail }: { value: Difficult
         ))}
       </div>
       <p className="muted tiny">
-        O nível se ajusta sozinho: pontuação acima de {LEVEL_UP_ABOVE * 100} sobe, abaixo de {LEVEL_DOWN_BELOW * 100} desce.
+        O nível se ajusta sozinho: pontuação acima de {formatPoints(LEVEL_UP_ABOVE)} sobe um nível; abaixo de {formatPoints(LEVEL_DOWN_BELOW)} desce.
       </p>
     </div>
+  )
+}
+
+/** Pergunta, uma vez, se a pessoa quer sons. Até a escolha, o jogo fica em silêncio. */
+export function SoundChoice() {
+  const { sound, set } = usePreferences()
+  if (sound !== null) return null
+  return (
+    <Notice tone="info">
+      <p>Quer ouvir um som curto a cada resposta? Você pode mudar depois.</p>
+      <div className="row">
+        <Button variant="secondary" onClick={() => set({ sound: true })}>Ligar sons</Button>
+        <Button variant="secondary" onClick={() => set({ sound: false })}>Sem sons</Button>
+      </div>
+    </Notice>
   )
 }
 
 export function PreferencesPanel({ showColorSymbols = false }: { showColorSymbols?: boolean }) {
   const { sound, colorSymbols, set } = usePreferences()
   return (
-    <div className="panel stack">
-      <Toggle label="Sons de resposta" checked={sound} onChange={v => set({ sound: v })} />
+    <div className="panel stack" style={{ gap: '0.25rem' }}>
+      <Toggle label="Sons de resposta" checked={sound === true} onChange={v => set({ sound: v })} />
       {showColorSymbols && (
         <Toggle label="Símbolos nas cores (para quem confunde cores)" checked={colorSymbols} onChange={v => set({ colorSymbols: v })} />
       )}
@@ -54,19 +79,32 @@ export function PreferencesPanel({ showColorSymbols = false }: { showColorSymbol
   )
 }
 
-export function PauseScreen({ onResume, onQuit }: { onResume: () => void; onQuit: () => void }) {
+const PAUSE_REASONS = {
+  user: null,
+  hidden: 'Pausamos porque a página ficou em segundo plano.',
+  render: 'Pausamos porque a tela parou de ser atualizada (por exemplo, janela encoberta ou aparelho sobrecarregado).',
+  navigation: 'Pausamos para você decidir se quer sair.',
+} as const
+
+export function PauseScreen({ reason, showColorSymbols, onResume, onQuit }: {
+  reason: keyof typeof PAUSE_REASONS | null; showColorSymbols?: boolean
+  onResume: () => void; onQuit: () => void
+}) {
+  const title = useFocusOnMount<HTMLHeadingElement>()
+  const why = reason ? PAUSE_REASONS[reason] : null
   return (
     <Screen>
       <Card>
         <div className="stack">
-          <h2>Partida pausada</h2>
-          <p className="muted small">A tentativa em andamento será repetida quando você continuar.</p>
-          <PreferencesPanel />
-          <Button onClick={onResume} autoFocus>Continuar</Button>
+          <h2 ref={title} tabIndex={-1}>Partida pausada</h2>
+          {why && <Notice tone="info">{why}</Notice>}
+          <p className="muted small">Se um círculo estava na tela, aquela tentativa não conta e será refeita em outro momento da partida.</p>
+          <PreferencesPanel showColorSymbols={showColorSymbols} />
+          <Button onClick={onResume}>Continuar</Button>
           <Button variant="secondary" onClick={() => {
             if (window.confirm('Encerrar a partida? O resultado não será salvo.')) onQuit()
           }}>Encerrar sem salvar</Button>
-          <p className="subtle tiny">Atalho: Esc</p>
+          <p className="subtle tiny">Atalho: Esc pausa e continua.</p>
         </div>
       </Card>
     </Screen>
@@ -75,44 +113,68 @@ export function PauseScreen({ onResume, onQuit }: { onResume: () => void; onQuit
 
 const TONE_COLORS = { great: 'var(--success)', good: 'var(--primary)', mid: 'var(--warning)', low: 'var(--danger)' }
 
-/** Cabeçalho de resultados: rótulo, pontuação 0–100 e aviso de que não é avaliação clínica. */
-export function ScoreHeader({ score, difficulty }: { score: number; difficulty: DifficultyLevel }) {
+/** Cabeçalho de resultados: rótulo, pontuação exata e descrição do que aconteceu. */
+export function ScoreHeader({ score, difficulty, description }: { score: number; difficulty: DifficultyLevel; description: string }) {
   const interp = interpretScore(score)
   const color = TONE_COLORS[interp.tone]
+  const title = useFocusOnMount<HTMLHeadingElement>()
   return (
     <>
       <div style={{ fontSize: '2.5rem' }} aria-hidden>{interp.emoji}</div>
-      <h2 style={{ color, fontSize: '1.6rem' }}>{interp.label}</h2>
-      <p className="muted small" style={{ marginBottom: '1.25rem' }}>{interp.description}</p>
-      <div className="panel" style={{ borderColor: `color-mix(in srgb, ${color} 40%, transparent)`, marginBottom: '1.25rem' }}>
-        <p className="eyebrow">Pontuação</p>
-        <p style={{ color, fontSize: '3rem', fontWeight: 900, lineHeight: 1.1 }}>{scoreToPercent(score)}</p>
+      <h2 ref={title} tabIndex={-1} style={{ color, fontSize: '1.6rem' }}>{interp.label}</h2>
+      <p className="muted small" style={{ marginBottom: '1rem' }}>{description}</p>
+      <div className="panel" style={{ borderColor: `color-mix(in srgb, ${color} 45%, transparent)`, marginBottom: '1rem' }}>
+        <p className="eyebrow">Pontuação da partida</p>
+        <p style={{ color, fontSize: '3rem', fontWeight: 900, lineHeight: 1.1 }}>{formatPoints(score)}</p>
         <p className="subtle tiny">de 100 · nível {difficulty}</p>
       </div>
     </>
   )
 }
 
-export function SaveStatus({ xp, saving, saved, error, onRetry }: { xp: number; saving: boolean; saved: boolean; error: string | null; onRetry: () => void }) {
+export function LevelDecision({ score, current, next }: { score: number; current: DifficultyLevel; next: DifficultyLevel }) {
+  const color = next > current ? 'var(--success)' : next < current ? 'var(--warning)' : 'var(--primary)'
+  return (
+    <p className="panel small" style={{ color, padding: '0.6rem 1rem' }}>
+      {explainDecision(score, current, next)} <span className="subtle">({DIFFICULTY_LABELS[next]})</span>
+    </p>
+  )
+}
+
+export function SaveStatus({ xp, saving, saved, error, storedLocally, onRetry, onReauth, onDiscard }: {
+  xp: number; saving: boolean; saved: boolean; error: SaveErrorKind | null; storedLocally: boolean
+  onRetry: () => void; onReauth: () => void; onDiscard: () => void
+}) {
+  const status = saving ? 'Salvando…' : saved ? '✓ Salvo na sua conta' : storedLocally ? 'Guardado neste aparelho' : 'Não salvo'
   return (
     <div className="stack" style={{ marginBottom: '0.75rem' }}>
-      <div className="panel" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem 1rem' }}>
-        <span style={{ color: 'var(--xp)', fontWeight: 800, fontSize: '1.05rem' }}>+{xp} XP</span>
-        <span role="status" className="small" style={{ color: saved ? 'var(--success)' : 'var(--muted)' }}>
-          {saving ? 'Salvando…' : saved ? '✓ Salvo' : 'Não salvo'}
+      <div className="panel" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', padding: '0.75rem 1rem' }}>
+        <span>
+          <strong style={{ color: 'var(--xp)', fontSize: '1.05rem' }}>+{xp} XP</strong>
+          <span className="subtle tiny"> de participação</span>
         </span>
+        <span role="status" className="small" style={{ color: saved ? 'var(--success)' : 'var(--muted)' }}>{status}</span>
       </div>
       {error && (
-        <div role="alert" className="notice notice-error stack">
-          <p>{error}</p>
-          <Button variant="secondary" onClick={onRetry} disabled={saving}>Tentar salvar novamente</Button>
+        <div role="alert" className="notice notice-error">
+          <p>{SAVE_ERROR_MESSAGES[error]}</p>
+          {!storedLocally && error !== 'rejected' && (
+            <p className="tiny">Este aparelho não permitiu guardar a partida: envie antes de sair desta tela.</p>
+          )}
+          <div className="row">
+            {error === 'auth' && <Button variant="secondary" onClick={onReauth}>Entrar novamente</Button>}
+            {error === 'rejected' && <Button variant="secondary" onClick={onDiscard}>Descartar esta partida</Button>}
+            {error !== 'auth' && error !== 'rejected' && (
+              <Button variant="secondary" onClick={onRetry} disabled={saving}>Tentar enviar de novo</Button>
+            )}
+          </div>
         </div>
       )}
     </div>
   )
 }
 
-/** Pede confirmação ao fechar/recarregar a página com trabalho não salvo. */
+/** Pede confirmação ao fechar/recarregar a página com trabalho em andamento. */
 export function useBeforeUnload(active: boolean) {
   useEffect(() => {
     if (!active) return
@@ -120,4 +182,21 @@ export function useBeforeUnload(active: boolean) {
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
   }, [active])
+}
+
+/** Confirmação de saída quando a navegação interna é bloqueada no meio de uma partida. */
+export function LeaveDialog({ onStay, onLeave }: { onStay: () => void; onLeave: () => void }) {
+  const title = useFocusOnMount<HTMLHeadingElement>()
+  return (
+    <Screen>
+      <Card>
+        <div className="stack" role="alertdialog" aria-labelledby="sair-titulo" aria-describedby="sair-texto">
+          <h2 id="sair-titulo" ref={title} tabIndex={-1}>Sair da partida?</h2>
+          <p id="sair-texto" className="muted">A partida em andamento não será salva.</p>
+          <Button onClick={onStay}>Continuar jogando</Button>
+          <Button variant="secondary" onClick={onLeave}>Sair sem salvar</Button>
+        </div>
+      </Card>
+    </Screen>
+  )
 }

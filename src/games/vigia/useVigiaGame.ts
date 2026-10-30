@@ -1,37 +1,111 @@
-// Liga as regras puras do Vigia (engine.ts) ao relógio e à tela.
-import { useCallback, useEffect, useRef, useState } from 'react'
+// Liga o ciclo puro da partida (session.ts) ao relógio, à tela e ao salvamento.
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useAuthStore } from '../../features/auth/authStore'
+import { classifySaveError, type SaveErrorKind } from '../../services/errors'
 import { playFalseAlarmSound, playHitSound } from '../core/audio'
 import { normalizeDifficulty, readDifficulty } from '../core/difficulty'
+import { listPending, removePending } from '../core/pendingResults'
 import type { DifficultyLevel } from '../core/types'
-import { COUNTDOWN_FROM, TIMING, TOTAL_TRIALS } from './config'
-import { computeResults, generateStimuli, makeTrial, type VigiaResults, type VigiaStimulus, type VigiaTrial } from './engine'
+import { TIMING, TOTAL_TRIALS } from './config'
+import { computeResults, generateStimuli, type VigiaResults } from './engine'
 import { persistSession, type SessionInfo } from './persistSession'
+import { createSession, reduceSession, visibleStimulus, type PauseReason, type SessionEvent, type SessionState } from './session'
+
+/** Relógio substituível (testes e diagnóstico). Usa sempre o tempo monotônico. */
+export interface GameClock {
+  now(): number
+  setTimeout(fn: () => void, ms: number): number
+  clearTimeout(id: number): void
+  requestFrame(fn: () => void): number
+  cancelFrame(id: number): void
+}
+
+export const realClock: GameClock = {
+  now: () => performance.now(),
+  setTimeout: (fn, ms) => window.setTimeout(fn, ms),
+  clearTimeout: id => window.clearTimeout(id),
+  requestFrame: fn => window.requestAnimationFrame(() => fn()),
+  cancelFrame: id => window.cancelAnimationFrame(id),
+}
+
+/** Sem quadro desenhado neste prazo, a partida pausa (interrupção técnica). */
+export const FRAME_TIMEOUT_MS = 300
 
 export type VigiaPhase = 'instructions' | 'countdown' | 'playing' | 'paused' | 'results'
 
-export function useVigiaGame() {
+export interface SaveFailure { kind: SaveErrorKind }
+
+export function useVigiaGame(clock: GameClock = realClock) {
   const userId = useAuthStore(state => state.user?.id)
   const [difficulty, setDifficulty] = useState<DifficultyLevel>(() => readDifficulty(userId))
-  const timing = TIMING[difficulty]
-
-  const [phase, setPhase] = useState<VigiaPhase>('instructions')
-  const [countdown, setCountdown] = useState(COUNTDOWN_FROM)
-  const [trialIndex, setTrialIndex] = useState(0)
-  const [showStimulus, setShowStimulus] = useState(false)
-  const [stimuli, setStimuli] = useState<VigiaStimulus[]>([])
+  const [session, setSession] = useState<SessionState | null>(null)
   const [results, setResults] = useState<VigiaResults | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [saveError, setSaveError] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<SaveFailure | null>(null)
+  /** A partida pendente está guardada neste aparelho (pode sair e enviar depois). */
+  const [storedLocally, setStoredLocally] = useState(false)
 
+  const sessionRef = useRef<SessionState | null>(null)
+  const infoRef = useRef<SessionInfo>({ id: '', userId: '', durationMs: 0 })
+  const timersRef = useRef<number[]>([])
   const savingRef = useRef(false)
-  const sessionRef = useRef<SessionInfo & { startedAt: number }>({ id: '', userId: '', durationMs: 0, startedAt: 0 })
-  const trialResultsRef = useRef<VigiaTrial[]>([])
-  const stimulusActiveRef = useRef(false)
-  const stimulusStartRef = useRef(0)
-  const respondedAtRef = useRef<number | null>(null)
-  const currentStimulusRef = useRef<VigiaStimulus | null>(null)
+
+  const clearTimers = useCallback(() => {
+    timersRef.current.forEach(id => clock.clearTimeout(id))
+    timersRef.current = []
+  }, [clock])
+
+  // dispatch e schedule se chamam mutuamente; a referência evita dependências circulares.
+  const dispatchRef = useRef<(e: SessionEvent) => void>(() => {})
+
+  const schedule = useCallback((s: SessionState) => {
+    clearTimers()
+    const later = (ms: number, make: () => SessionEvent) => {
+      timersRef.current.push(clock.setTimeout(() => dispatchRef.current(make()), ms))
+    }
+    const { stimulus, iti } = TIMING[s.difficulty]
+    switch (s.phase) {
+      case 'countdown':
+        later(1000, () => ({ type: 'tick', at: clock.now() }))
+        break
+      case 'presenting':
+        later(FRAME_TIMEOUT_MS, () => ({ type: 'frameTimeout', at: clock.now(), random: Math.random }))
+        break
+      case 'exposure': {
+        const elapsed = clock.now() - (s.exposureStart ?? clock.now())
+        later(Math.max(0, stimulus - elapsed), () => ({ type: 'exposureEnd', at: clock.now() }))
+        break
+      }
+      case 'gap':
+        later(iti, () => ({ type: 'gapEnd', at: clock.now() }))
+        break
+    }
+  }, [clearTimers, clock])
+
+  const dispatch = useCallback((e: SessionEvent) => {
+    const prev = sessionRef.current
+    if (!prev) return
+    const next = reduceSession(prev, e)
+    if (next === prev) return
+    sessionRef.current = next
+    setSession(next)
+    if (next.phase !== prev.phase || next.countdown !== prev.countdown) schedule(next)
+  }, [schedule])
+  dispatchRef.current = dispatch
+
+  // Apresentação: depois que o estímulo entra no DOM, espera dois quadros. O primeiro marca
+  // o início (é o quadro em que ele é pintado); o segundo confirma que a pintura aconteceu.
+  const presentingKey = session?.phase === 'presenting' ? `${session.trials.length}:${session.interruptions}` : null
+  useLayoutEffect(() => {
+    if (!presentingKey) return
+    let second = 0
+    const first = clock.requestFrame(() => {
+      const paintedAt = clock.now()
+      second = clock.requestFrame(() => dispatchRef.current({ type: 'frameShown', at: paintedAt }))
+    })
+    return () => { clock.cancelFrame(first); clock.cancelFrame(second) }
+  }, [presentingKey, clock])
 
   const saveResults = useCallback(async (value: VigiaResults) => {
     if (savingRef.current) return
@@ -39,7 +113,7 @@ export function useVigiaGame() {
     setSaving(true)
     setSaveError(null)
     try {
-      const official = await persistSession(value, sessionRef.current)
+      const official = await persistSession(value, infoRef.current)
       // O servidor é a fonte oficial de pontuação e XP.
       setResults(r => r && {
         ...r,
@@ -47,144 +121,116 @@ export function useVigiaGame() {
         xpEarned: official.xpEarned,
       })
       setSaved(true)
-    } catch {
-      setSaveError('Não foi possível salvar. Sua partida continua nesta tela. Tente novamente antes de sair.')
+    } catch (error) {
+      const { id, userId: owner } = infoRef.current
+      setStoredLocally(listPending(owner).some(p => p.sessionId === id))
+      setSaveError({ kind: classifySaveError(error) })
     } finally {
       savingRef.current = false
       setSaving(false)
     }
   }, [])
 
+  // Fim da partida: calcula, mostra e envia (tempo ativo, sem pausas nem contagem).
+  useEffect(() => {
+    if (session?.phase !== 'finished' || results) return
+    infoRef.current = { ...infoRef.current, durationMs: session.activeMs }
+    const finalResults = computeResults(session.trials, session.difficulty)
+    setResults(finalResults)
+    void saveResults(finalResults)
+  }, [session, results, saveResults])
+
   const startGame = useCallback((chosen?: DifficultyLevel) => {
     if (savingRef.current || !userId) return
     const d = normalizeDifficulty(chosen ?? difficulty)
-    sessionRef.current = { id: crypto.randomUUID(), userId, durationMs: 0, startedAt: performance.now() }
-    trialResultsRef.current = []
-    currentStimulusRef.current = null
+    infoRef.current = { id: crypto.randomUUID(), userId, durationMs: 0 }
+    const s = createSession(generateStimuli(d), d)
+    sessionRef.current = s
     setDifficulty(d)
-    setStimuli(generateStimuli(d))
+    setSession(s)
     setResults(null)
     setSaved(false)
     setSaveError(null)
-    setTrialIndex(0)
-    setCountdown(COUNTDOWN_FROM)
-    setPhase('countdown')
-  }, [difficulty, userId])
+    setStoredLocally(false)
+    schedule(s)
+  }, [difficulty, userId, schedule])
 
   const handleResponse = useCallback(() => {
-    if (!stimulusActiveRef.current || respondedAtRef.current !== null) return
-    respondedAtRef.current = performance.now()
-    if (currentStimulusRef.current?.isTarget) playHitSound()
-    else playFalseAlarmSound()
-  }, [])
-
-  // A tentativa em andamento é descartada e repetida ao continuar.
-  const pause = useCallback(() => {
-    setPhase(p => (p === 'playing' || p === 'countdown' ? 'paused' : p))
-  }, [])
-
-  const resume = useCallback(() => {
-    setCountdown(COUNTDOWN_FROM)
-    setPhase(p => (p === 'paused' ? 'countdown' : p))
-  }, [])
-
-  // Contagem regressiva (no início e ao voltar da pausa).
-  useEffect(() => {
-    if (phase !== 'countdown') return
-    if (countdown === 0) { setPhase('playing'); return }
-    const t = setTimeout(() => setCountdown(c => c - 1), 1000)
-    return () => clearTimeout(t)
-  }, [phase, countdown])
-
-  // Laço principal: mostra o estímulo, mede a resposta, espera o intervalo.
-  useEffect(() => {
-    if (phase !== 'playing') return
-
-    if (trialIndex >= TOTAL_TRIALS) {
-      sessionRef.current.durationMs = Math.round(performance.now() - sessionRef.current.startedAt)
-      const finalResults = computeResults(trialResultsRef.current, difficulty)
-      setResults(finalResults)
-      setPhase('results')
-      void saveResults(finalResults)
-      return
+    const prev = sessionRef.current
+    if (!prev) return
+    dispatch({ type: 'respond', at: clock.now() })
+    const next = sessionRef.current
+    if (next && next.response !== null && prev.response === null) {
+      if (prev.queue[0]?.isTarget) playHitSound()
+      else playFalseAlarmSound()
     }
+  }, [dispatch, clock])
 
-    // Se a partida foi pausada no meio desta tentativa, ela recomeça do zero.
-    trialResultsRef.current.length = trialIndex
-    respondedAtRef.current = null
-    const stimulus = stimuli[trialIndex]
-    let hideTimer: ReturnType<typeof setTimeout> | undefined
-    let itiTimer: ReturnType<typeof setTimeout> | undefined
+  const pause = useCallback((reason: PauseReason = 'user') => {
+    dispatch({ type: 'pause', at: clock.now(), reason, random: Math.random })
+  }, [dispatch, clock])
 
-    setShowStimulus(true)
-    // O tempo conta a partir do quadro em que o estímulo é desenhado. Se o navegador
-    // não entregar o quadro (janela encoberta), a tentativa começa mesmo assim.
-    let started = false
-    const begin = () => {
-      if (started) return
-      started = true
-      stimulusStartRef.current = performance.now()
-      currentStimulusRef.current = stimulus
-      stimulusActiveRef.current = true
-      hideTimer = setTimeout(() => {
-        stimulusActiveRef.current = false
-        currentStimulusRef.current = null
-        setShowStimulus(false)
-        const respondedAt = respondedAtRef.current
-        trialResultsRef.current.push(makeTrial(
-          stimulus, respondedAt === null ? null : respondedAt - stimulusStartRef.current, difficulty,
-        ))
-        itiTimer = setTimeout(() => setTrialIndex(i => i + 1), timing.iti)
-      }, timing.stimulus)
-    }
-    const frame = requestAnimationFrame(begin)
-    const frameFallback = setTimeout(begin, 50)
+  const resume = useCallback(() => dispatch({ type: 'resume' }), [dispatch])
 
-    return () => {
-      cancelAnimationFrame(frame)
-      clearTimeout(frameFallback)
-      stimulusActiveRef.current = false
-      currentStimulusRef.current = null
-      clearTimeout(hideTimer)
-      clearTimeout(itiTimer)
-    }
-  }, [phase, trialIndex, stimuli, difficulty, timing, saveResults])
+  /** Abandona a partida em andamento (nada é salvo). */
+  const quit = useCallback(() => {
+    clearTimers()
+    sessionRef.current = null
+    setSession(null)
+  }, [clearTimers])
 
-  useEffect(() => {
-    if (phase === 'paused') setShowStimulus(false)
-  }, [phase])
+  /** Descarta um resultado que o servidor recusou definitivamente. */
+  const discardResult = useCallback(() => {
+    if (infoRef.current.userId) removePending(infoRef.current.userId, infoRef.current.id)
+    quit()
+    setResults(null)
+    setSaveError(null)
+    setStoredLocally(false)
+  }, [quit])
+
+  useEffect(() => clearTimers, [clearTimers])
+
+  const phase = session?.phase
+  const viewPhase: VigiaPhase =
+    !session ? 'instructions'
+    : phase === 'countdown' ? 'countdown'
+    : phase === 'paused' ? 'paused'
+    : phase === 'finished' ? 'results'
+    : 'playing'
 
   // Teclado: Espaço responde; Esc pausa e continua.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && phase === 'playing') {
+      if (e.code === 'Space' && viewPhase === 'playing') {
         e.preventDefault()
         if (!e.repeat) handleResponse()
       } else if (e.code === 'Escape') {
-        if (phase === 'playing' || phase === 'countdown') pause()
-        else if (phase === 'paused') resume()
+        if (viewPhase === 'playing' || viewPhase === 'countdown') pause('user')
+        else if (viewPhase === 'paused') resume()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [handleResponse, pause, resume, phase])
+  }, [handleResponse, pause, resume, viewPhase])
 
   // Trocar de aba ou minimizar pausa a partida, para não registrar omissões falsas.
   useEffect(() => {
-    const onVisibility = () => { if (document.hidden) pause() }
+    const onVisibility = () => { if (document.hidden) pause('hidden') }
     document.addEventListener('visibilitychange', onVisibility)
     return () => document.removeEventListener('visibilitychange', onVisibility)
   }, [pause])
 
-  const inProgress = phase === 'countdown' || phase === 'playing' || phase === 'paused'
-
   return {
-    phase, countdown, trialIndex, totalTrials: TOTAL_TRIALS,
-    showStimulus,
-    currentStimulus: stimuli[trialIndex] ?? null,
-    results, saving, saved, saveError, difficulty,
-    hasUnsavedWork: inProgress || (results !== null && !saved),
+    phase: viewPhase,
+    countdown: session?.countdown ?? 0,
+    completedTrials: session?.trials.length ?? 0,
+    totalTrials: TOTAL_TRIALS,
+    stimulus: session ? visibleStimulus(session) : null,
+    pauseReason: session?.pauseReason ?? null,
+    interruptions: session?.interruptions ?? 0,
+    results, saving, saved, saveError, storedLocally, difficulty,
+    inProgress: viewPhase === 'countdown' || viewPhase === 'playing' || viewPhase === 'paused',
     retrySave: () => { if (results) void saveResults(results) },
-    startGame, handleResponse, pause, resume,
+    startGame, handleResponse, pause, resume, quit, discardResult,
   }
 }

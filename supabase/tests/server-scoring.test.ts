@@ -1,17 +1,39 @@
-// Testa a migração 002 num PostgreSQL local (PGlite): pontuação no servidor,
-// idempotência, validações e isolamento entre contas. Não acessa o Supabase remoto.
-import { beforeAll, describe, expect, it } from 'vitest'
+// Testa as migrações num PostgreSQL local (PGlite): pontuação no servidor, idempotência,
+// validações e isolamento entre contas. Não acessa o Supabase remoto.
+// Cada grupo usa o próprio banco, e os sorteios usam semente (TEST_SEED) para reproduzir falhas.
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { generateStimuli, makeTrial, computeResults, minimumDurationMs, type VigiaTrial } from '../../src/games/vigia/engine'
+import { seededRandom } from '../../src/games/core/random'
 import type { DifficultyLevel } from '../../src/games/core/types'
 import { ageSessions, asUser, createDb, createUser, sql, type Db } from './db'
 
 interface Saved { session_id: string; k_score: number; xp_earned: number; next_difficulty: number; already_saved: boolean }
 
+const SEED = Number(process.env.TEST_SEED ?? 20261030)
+const random = seededRandom(SEED)
+
 function randomGame(d: DifficultyLevel, hitChance = 0.85, faChance = 0.1) {
-  return generateStimuli(d).map(s => {
-    const responds = Math.random() < (s.isTarget ? hitChance : faChance)
-    return makeTrial(s, responds ? 150 + Math.random() * 1000 : null, d)
+  return generateStimuli(d, random).map(s => {
+    const responds = random() < (s.isTarget ? hitChance : faChance)
+    return makeTrial(s, responds ? 150 + random() * 1000 : null, d)
   })
+}
+
+/** Caso de meio milésimo exato (0,6355) que divergia entre app e banco na 002. */
+function halfThousandthGame() {
+  return [
+    ...[650, 323, 262, 460, 650, 632].map(rt => makeTrial({ color: 'azul', isTarget: true }, rt, 6)),
+    ...[0, 1].map(() => makeTrial({ color: 'azul', isTarget: true }, null, 6)),
+    ...Array.from({ length: 22 }, () => makeTrial({ color: 'verde', isTarget: false }, null, 6)),
+  ]
+}
+
+/** Cria um banco novo para o grupo de testes e o fecha no fim. */
+function withDb(options?: Parameters<typeof createDb>[0]) {
+  const ref: { db: Db } = {} as { db: Db }
+  beforeAll(async () => { ref.db = await createDb(options) }, 60_000)
+  afterAll(async () => { await ref.db?.close() })
+  return ref
 }
 
 async function save(db: Db, userId: string | null, trials: VigiaTrial[], d: DifficultyLevel, opts: { id?: string; duration?: number } = {}) {
@@ -24,42 +46,76 @@ async function save(db: Db, userId: string | null, trials: VigiaTrial[], d: Diff
   })
 }
 
-let db: Db
-beforeAll(async () => { db = await createDb({ withLegacyScript: true }) }, 60_000)
+/** Estado observável do banco que precisa ser o mesmo depois de reaplicar migrações. */
+async function snapshot(db: Db) {
+  const r = await db.query<{ item: string }>(`
+    SELECT 'fn ' || proname || '(' || pg_get_function_identity_arguments(p.oid) || ') definer=' || prosecdef
+           || ' exata=' || (position('v_num' IN prosrc) > 0) AS item
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public'
+    UNION ALL SELECT 'policy ' || tablename || ' ' || policyname || ' ' || cmd FROM pg_policies WHERE schemaname = 'public'
+    UNION ALL SELECT 'exec ' || r || ' ' || f || '=' || has_function_privilege(r, f, 'EXECUTE')
+      FROM unnest(ARRAY['anon','authenticated']) r,
+           unnest(ARRAY['public.handle_new_user()','public.save_vigia_session(uuid,integer,integer,jsonb)']) f
+    UNION ALL SELECT 'col ' || c || '=' || has_column_privilege('authenticated', 'public.profiles', c, 'UPDATE')
+      FROM unnest(ARRAY['name','avatar_url','xp_total','level']) c
+    ORDER BY 1`)
+  return r.rows.map(x => x.item)
+}
 
-describe('migração', () => {
+describe('cadeia de migrações', () => {
+  const ref = withDb({ withLegacyScript: true })
+
   it('substitui a função antiga que aceitava pontuação do cliente', async () => {
-    const r = await db.query<{ args: string }>(
+    const r = await ref.db.query<{ args: string }>(
       `SELECT pg_get_function_identity_arguments(oid) AS args FROM pg_proc WHERE proname = 'save_vigia_session'`)
     expect(r.rows.map(x => x.args)).toEqual(['p_session_id uuid, p_duration_ms integer, p_difficulty integer, p_trials jsonb'])
   })
-  it('pode ser aplicada de novo sem erro', async () => {
-    await expect(db.exec(sql('supabase/migrations/002_server_scoring_and_rls.sql'))).resolves.toBeDefined()
+
+  it('reaplicar 002 e 003 em ordem chega ao mesmo estado final, com a pontuação exata', async () => {
+    const before = await snapshot(ref.db)
+    expect(before).toContain('fn save_vigia_session(p_session_id uuid, p_duration_ms integer, p_difficulty integer, p_trials jsonb) definer=true exata=true')
+    await ref.db.exec(sql('supabase/migrations/002_server_scoring_and_rls.sql'))
+    await ref.db.exec(sql('supabase/migrations/003_exact_scoring_and_hardening.sql'))
+    expect(await snapshot(ref.db)).toEqual(before)
+    const saved = await save(ref.db, await createUser(ref.db), halfThousandthGame(), 6)
+    expect(Number(saved.k_score)).toBe(0.636)
   })
+
   it('003: a função de trigger não pode ser chamada pela API', async () => {
-    const r = await db.query<{ anon: boolean; auth: boolean }>(`
+    const r = await ref.db.query<{ anon: boolean; auth: boolean }>(`
       SELECT has_function_privilege('anon', 'public.handle_new_user()', 'EXECUTE') AS anon,
              has_function_privilege('authenticated', 'public.handle_new_user()', 'EXECUTE') AS auth`)
     expect(r.rows[0]).toEqual({ anon: false, auth: false })
   })
+})
+
+describe('perfis e sequências', () => {
+  const ref = withDb()
+
   it('003: cria a sequência que faltava sem duplicar e pode ser repetida', async () => {
-    const id = await createUser(db)
-    await db.query('DELETE FROM public.streaks WHERE user_id = $1', [id])
-    await db.exec(sql('supabase/migrations/003_exact_scoring_and_hardening.sql'))
-    await db.exec(sql('supabase/migrations/003_exact_scoring_and_hardening.sql'))
-    const r = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM public.streaks WHERE user_id = $1', [id])
+    const id = await createUser(ref.db)
+    await ref.db.query('DELETE FROM public.streaks WHERE user_id = $1', [id])
+    await ref.db.exec(sql('supabase/migrations/003_exact_scoring_and_hardening.sql'))
+    await ref.db.exec(sql('supabase/migrations/003_exact_scoring_and_hardening.sql'))
+    const r = await ref.db.query<{ n: number }>('SELECT count(*)::int AS n FROM public.streaks WHERE user_id = $1', [id])
     expect(r.rows[0].n).toBe(1)
   })
+
   it('cria perfil e sequência para usuário novo', async () => {
-    const id = await createUser(db, 'Ana Souza')
-    const p = await db.query<{ name: string }>('SELECT name FROM public.profiles WHERE id = $1', [id])
-    const s = await db.query('SELECT 1 FROM public.streaks WHERE user_id = $1', [id])
+    const id = await createUser(ref.db, 'Ana Souza')
+    const p = await ref.db.query<{ name: string }>('SELECT name FROM public.profiles WHERE id = $1', [id])
+    const s = await ref.db.query('SELECT 1 FROM public.streaks WHERE user_id = $1', [id])
     expect(p.rows[0].name).toBe('Ana Souza')
     expect(s.rows).toHaveLength(1)
   })
 })
 
-describe('pontuação oficial', () => {
+// Os grupos abaixo compartilham um banco só com a cadeia 001 → 002 → 003, sem reaplicações.
+let db: Db
+const main = withDb()
+beforeAll(() => { db = main.db })
+
+describe(`pontuação oficial (TEST_SEED=${SEED})`, () => {
   it('servidor e app calculam exatamente a mesma pontuação, XP e próximo nível', async () => {
     for (let i = 0; i < 300; i++) {
       const d = ((i % 10) + 1) as DifficultyLevel

@@ -30,12 +30,16 @@ export function distractorsFor(difficulty: DifficultyLevel): StimulusColor[] {
   return ['vermelho', 'verde', 'laranja', 'ciano', 'roxo']
 }
 
-/** Cor na tela, nome acessível e símbolo de apoio (modo "símbolos nas cores"). */
-export const COLORS: Record<StimulusColor, { hex: string; label: string; symbol: string }> = {
-  azul: { hex: '#3b82f6', label: 'azul', symbol: '★' },
-  vermelho: { hex: '#ef4444', label: 'vermelho', symbol: '▲' },
-  verde: { hex: '#22c55e', label: 'verde', symbol: '■' },
-  laranja: { hex: '#f97316', label: 'laranja', symbol: '◆' },
-  ciano: { hex: '#06b6d4', label: 'ciano', symbol: '✚' },
-  roxo: { hex: '#8b5cf6', label: 'roxo', symbol: '●' },
+/**
+ * Cor na tela, nome acessível e símbolo de apoio (modo "símbolos nas cores").
+ * As cores dos estímulos fazem parte da regra do jogo; o símbolo é escuro porque
+ * tem mais contraste que o branco em todos os círculos.
+ */
+export const COLORS: Record<StimulusColor, { hex: string; label: string; symbol: string; symbolColor: string }> = {
+  azul: { hex: '#3b82f6', label: 'azul', symbol: '★', symbolColor: '#0f0f1a' },
+  vermelho: { hex: '#ef4444', label: 'vermelho', symbol: '▲', symbolColor: '#0f0f1a' },
+  verde: { hex: '#22c55e', label: 'verde', symbol: '■', symbolColor: '#0f0f1a' },
+  laranja: { hex: '#f97316', label: 'laranja', symbol: '◆', symbolColor: '#0f0f1a' },
+  ciano: { hex: '#06b6d4', label: 'ciano', symbol: '✚', symbolColor: '#0f0f1a' },
+  roxo: { hex: '#8b5cf6', label: 'roxo', symbol: '●', symbolColor: '#0f0f1a' },
 }

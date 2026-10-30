@@ -2,6 +2,7 @@
 // Escritas só acontecem por funções do servidor (RPC); as tabelas são somente leitura para o app.
 import { normalizeDifficulty } from '../games/core/difficulty'
 import type { DifficultyLevel, GameId, GameProgress } from '../games/core/types'
+import { classifySaveError, SaveError } from './errors'
 import { supabase } from './supabase'
 
 export async function getProfileXp(userId: string): Promise<number> {
@@ -49,17 +50,31 @@ export interface SavedSession {
   nextDifficulty: DifficultyLevel
 }
 
-export async function saveVigiaSession(p: SaveVigiaPayload): Promise<SavedSession> {
-  const { data, error } = await supabase.rpc('save_vigia_session', {
+/** Tempo máximo de espera pelo servidor ao salvar. */
+export const SAVE_TIMEOUT_MS = 15_000
+
+const isInt = (v: unknown, min: number, max: number): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max
+
+/** Confere a resposta da RPC; qualquer desvio do contrato é tratado como erro. */
+export function parseSavedSession(data: unknown, sessionId: string): SavedSession {
+  const r = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>
+  const k = r.k_score
+  const validScore = typeof k === 'number' && k >= 0 && k <= 1 && Math.abs(Math.round(k * 1000) - k * 1000) < 1e-6
+  // XP do Vigia: mínimo 50 + 0 + 0 + 15 = 65; máximo 50 + 100 + 45 + 15 = 210.
+  if (!validScore || !isInt(r.xp_earned, 65, 210) || !isInt(r.next_difficulty, 1, 10) || r.session_id !== sessionId) {
+    throw new SaveError('unexpected', 'Resposta do servidor fora do formato esperado.')
+  }
+  return { score: k, xpEarned: r.xp_earned, nextDifficulty: normalizeDifficulty(r.next_difficulty) }
+}
+
+export async function saveVigiaSession(p: SaveVigiaPayload, timeoutMs = SAVE_TIMEOUT_MS): Promise<SavedSession> {
+  const { data, error, status } = await supabase.rpc('save_vigia_session', {
     p_session_id: p.sessionId,
     p_duration_ms: p.durationMs,
     p_difficulty: p.difficulty,
     p_trials: p.trials,
-  })
-  if (error) throw error
-  const r = (data ?? {}) as Record<string, unknown>
-  const score = Number(r.k_score)
-  const xpEarned = Number(r.xp_earned)
-  if (!Number.isFinite(score) || !Number.isFinite(xpEarned)) throw new Error('Resposta inesperada do servidor.')
-  return { score, xpEarned, nextDifficulty: normalizeDifficulty(r.next_difficulty) }
+  }).abortSignal(AbortSignal.timeout(timeoutMs))
+  if (error) throw new SaveError(classifySaveError(error, status), error.message)
+  return parseSavedSession(data, p.sessionId)
 }

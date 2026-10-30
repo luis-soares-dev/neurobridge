@@ -31,6 +31,25 @@ export function adjustDifficulty(score: number, current: DifficultyLevel): Diffi
   return current
 }
 
+/** Pontuação com uma casa decimal, no mesmo rigor usado para decidir o nível (ex.: "70,4"). */
+export function formatPoints(score: number): string {
+  const tenths = Math.round(score * 1000)
+  return tenths % 10 === 0 ? String(tenths / 10) : (tenths / 10).toFixed(1).replace('.', ',')
+}
+
+const UP = formatPoints(LEVEL_UP_ABOVE)
+const DOWN = formatPoints(LEVEL_DOWN_BELOW)
+
+/** Explica a decisão de nível com os números exatos que a produziram. */
+export function explainDecision(score: number, current: DifficultyLevel, next: DifficultyLevel): string {
+  const pts = formatPoints(score)
+  if (next > current) return `Sobe para o nível ${next}: ${pts} pontos é mais que ${UP}.`
+  if (next < current) return `Desce para o nível ${next}: ${pts} pontos é menos que ${DOWN}.`
+  if (score > LEVEL_UP_ABOVE) return `Continua no nível ${current}, o mais difícil.`
+  if (score < LEVEL_DOWN_BELOW) return `Continua no nível ${current}, o mais fácil.`
+  return `Continua no nível ${current}: para subir é preciso passar de ${UP} pontos (você fez ${pts}).`
+}
+
 // Cache local por jogador e por jogo. A chave do Vigia é a mesma da versão anterior.
 const cacheKey = (userId: string, gameId: GameId) => `neurobridge:${userId}:${gameId}:difficulty`
 

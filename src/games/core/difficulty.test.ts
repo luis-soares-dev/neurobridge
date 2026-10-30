@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest'
-import { adjustDifficulty, clampDifficulty, normalizeDifficulty, readDifficulty, writeDifficulty } from './difficulty'
+import { adjustDifficulty, clampDifficulty, explainDecision, formatPoints, normalizeDifficulty, readDifficulty, writeDifficulty } from './difficulty'
 
 const values = new Map<string, string>()
 Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
@@ -51,5 +51,20 @@ describe('ajuste adaptativo', () => {
     expect(adjustDifficulty(0, 1)).toBe(1)
     expect(clampDifficulty(42)).toBe(10)
     expect(clampDifficulty(-3)).toBe(1)
+  })
+})
+
+describe('explicação da decisão de nível', () => {
+  it('mostra a pontuação com o rigor usado na decisão (0,700 mantém; 0,704 sobe; 0,395 desce)', () => {
+    expect(formatPoints(0.7)).toBe('70')
+    expect(formatPoints(0.704)).toBe('70,4')
+    expect(formatPoints(0.395)).toBe('39,5')
+    expect(explainDecision(0.7, 3, 3)).toBe('Continua no nível 3: para subir é preciso passar de 70 pontos (você fez 70).')
+    expect(explainDecision(0.704, 3, 4)).toBe('Sobe para o nível 4: 70,4 pontos é mais que 70.')
+    expect(explainDecision(0.395, 3, 2)).toBe('Desce para o nível 2: 39,5 pontos é menos que 40.')
+  })
+  it('explica os limites do nível 1 e do nível 10', () => {
+    expect(explainDecision(0.9, 10, 10)).toBe('Continua no nível 10, o mais difícil.')
+    expect(explainDecision(0.1, 1, 1)).toBe('Continua no nível 1, o mais fácil.')
   })
 })
