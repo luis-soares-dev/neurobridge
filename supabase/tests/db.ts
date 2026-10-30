@@ -27,6 +27,7 @@ export async function createDb({ withLegacyScript = false } = {}) {
   await db.exec(sql('supabase/migrations/001_init.sql'))
   if (withLegacyScript) await db.exec(sql('supabase/scripts/save_vigia_session.sql'))
   await db.exec(sql('supabase/migrations/002_server_scoring_and_rls.sql'))
+  await db.exec(sql('supabase/migrations/003_exact_scoring_and_hardening.sql'))
   return db
 }
 

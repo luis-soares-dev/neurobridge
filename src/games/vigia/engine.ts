@@ -82,10 +82,21 @@ export function scoreVigia(trials: VigiaTrial[], difficulty: DifficultyLevel): S
   const precision = Math.max(0, hitRate - falseAlarmRate)
 
   const window = TIMING[difficulty].stimulus
-  const meanRT = hitRTs.length ? hitRTs.reduce((a, b) => a + b, 0) / hitRTs.length : window
-  const speed = hitRTs.length ? Math.min(1, Math.max(0, 1 - 0.5 * (meanRT / window))) : 0
+  const hits = hitRTs.length
+  const sumRT = hitRTs.reduce((a, b) => a + b, 0)
+  const speed = hits ? Math.min(1, Math.max(0, 1 - 0.5 * (sumRT / hits / window))) : 0
 
-  const score = roundScore(precision * (0.6 + 0.4 * speed))
+  // A mesma conta em inteiros (os tempos já vêm limitados à janela):
+  //   pontuação = max(0, h·N − f·T) · (5·h·W − ΣRT) / (5·T·N·h·W)
+  // arredondada para milésimos com meio para cima. Assim app e banco chegam ao
+  // mesmo resultado mesmo quando a conta cai exatamente em x,xxx5.
+  let thousandths = 0n
+  if (hits > 0 && targets.length > 0 && nonTargets.length > 0) {
+    const num = BigInt(Math.max(0, hits * nonTargets.length - falseAlarms * targets.length)) * BigInt(5 * hits * window - sumRT)
+    const den = 5n * BigInt(targets.length * nonTargets.length * hits * window)
+    thousandths = (2000n * num + den) / (2n * den)
+  }
+  const score = roundScore(Number(thousandths) / 1000)
   return {
     score,
     precision: roundScore(precision),

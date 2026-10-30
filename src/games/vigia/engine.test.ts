@@ -81,6 +81,16 @@ describe('pontuação e dificuldade adaptativa', () => {
     expect(misses(4)).toBeGreaterThanOrEqual(0.4)
     expect(misses(5)).toBeLessThan(0.4)
   })
+  it('arredonda meio milésimo para cima com conta exata (caso que divergia do banco)', () => {
+    // Nível 6, 6 de 8 azuis, sem falsos alarmes: valor exato 0,6355 → 0,636.
+    const rts = [650, 323, 262, 460, 650, 632]
+    const trials = [
+      ...rts.map(rt => makeTrial({ color: 'azul', isTarget: true }, rt, 6)),
+      ...[0, 1].map(() => makeTrial({ color: 'azul', isTarget: true }, null, 6)),
+      ...Array.from({ length: 22 }, () => makeTrial({ color: 'verde', isTarget: false }, null, 6)),
+    ]
+    expect(scoreVigia(trials, 6).score).toBe(0.636)
+  })
   it('pontuação é sempre finita, entre 0 e 1, com 3 casas', () => {
     for (let k = 0; k < 300; k++) {
       const d = LEVELS[k % 10]

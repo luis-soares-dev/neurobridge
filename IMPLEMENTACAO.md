@@ -6,10 +6,22 @@ Esta entrega mantém React, TypeScript, Vite e Supabase. **Não publica o aplica
 
 O app novo **só funciona com a migração 002 aplicada**, porque a função de salvar mudou de assinatura.
 
+**Estado do banco `neurobridge` (yyxazxkqmnokdylncyph):**
+- 002 **aplicada em 30/10/2026**. Conferido depois: função nova ativa, políticas somente leitura, `anon` sem acesso, dados existentes preservados.
+- 003 **aplicada em 30/10/2026**. Conferido depois:
+  - pontuação calculada só com inteiros;
+  - `handle_new_user` não pode mais ser chamada pela API;
+  - o perfil existente ganhou a linha de streak que faltava;
+  - restam só os dois alertas aceitos no Advisor.
+- Ainda falta o teste real com duas contas Google pelo app.
+
 1. Reativar o projeto Supabase `neurobridge` e conferir se ele é o projeto usado pela aplicação.
 2. Conferir a estrutura real contra `supabase/migrations/001_init.sql`. Não executar a 001 novamente sobre um banco existente.
 3. Executar `supabase/migrations/002_server_scoring_and_rls.sql` no SQL Editor. Ela roda numa transação, pode ser repetida sem erro e substitui o antigo `scripts/save_vigia_session.sql`, aplicado ou não.
-4. Rodar o Security Advisor do Supabase e conferir se não há alertas novos.
+4. Executar `supabase/migrations/003_exact_scoring_and_hardening.sql` (idempotente).
+   Depois, rodar o Security Advisor. Dois alertas são esperados e aceitos:
+   - `save_vigia_session` executável por usuários logados (é a forma de salvar);
+   - proteção de senhas vazadas desligada (o app só usa login com Google).
 5. Configurar `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`. Nunca usar a chave service_role no frontend.
 6. Teste manual com duas contas:
    - 1 sessão e 30 eventos por partida;
@@ -86,7 +98,7 @@ Para criar um jogo novo: crie `src/games/<id>/` com config, engine (e seus teste
   - responder mais rápido nunca baixa a pontuação;
   - a pontuação fica sempre entre 0 e 1.
 - Testes da migração 002 em PGlite, com Auth simulado, usando os arquivos SQL reais sem alteração:
-  - paridade exata app × servidor em 40 partidas aleatórias;
+  - paridade exata app × servidor em 300 partidas aleatórias, mais o caso de meio milésimo. A conta é feita só com inteiros nos dois lados; num teste de estresse com 5.000 partidas não houve nenhuma divergência;
   - idempotência e limite do histórico em 30;
   - recusas de partidas inválidas;
   - isolamento entre contas;

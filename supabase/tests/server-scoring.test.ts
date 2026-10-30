@@ -36,6 +36,20 @@ describe('migração', () => {
   it('pode ser aplicada de novo sem erro', async () => {
     await expect(db.exec(sql('supabase/migrations/002_server_scoring_and_rls.sql'))).resolves.toBeDefined()
   })
+  it('003: a função de trigger não pode ser chamada pela API', async () => {
+    const r = await db.query<{ anon: boolean; auth: boolean }>(`
+      SELECT has_function_privilege('anon', 'public.handle_new_user()', 'EXECUTE') AS anon,
+             has_function_privilege('authenticated', 'public.handle_new_user()', 'EXECUTE') AS auth`)
+    expect(r.rows[0]).toEqual({ anon: false, auth: false })
+  })
+  it('003: cria a sequência que faltava sem duplicar e pode ser repetida', async () => {
+    const id = await createUser(db)
+    await db.query('DELETE FROM public.streaks WHERE user_id = $1', [id])
+    await db.exec(sql('supabase/migrations/003_exact_scoring_and_hardening.sql'))
+    await db.exec(sql('supabase/migrations/003_exact_scoring_and_hardening.sql'))
+    const r = await db.query<{ n: number }>('SELECT count(*)::int AS n FROM public.streaks WHERE user_id = $1', [id])
+    expect(r.rows[0].n).toBe(1)
+  })
   it('cria perfil e sequência para usuário novo', async () => {
     const id = await createUser(db, 'Ana Souza')
     const p = await db.query<{ name: string }>('SELECT name FROM public.profiles WHERE id = $1', [id])
@@ -47,7 +61,7 @@ describe('migração', () => {
 
 describe('pontuação oficial', () => {
   it('servidor e app calculam exatamente a mesma pontuação, XP e próximo nível', async () => {
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 300; i++) {
       const d = ((i % 10) + 1) as DifficultyLevel
       const trials = randomGame(d, Math.random(), Math.random() * 0.3)
       const expected = computeResults(trials, d)
@@ -55,7 +69,18 @@ describe('pontuação oficial', () => {
       expect({ k: Number(saved.k_score), xp: saved.xp_earned, next: saved.next_difficulty })
         .toEqual({ k: expected.score.score, xp: expected.xpEarned, next: expected.score.nextDifficulty })
     }
-  }, 60_000)
+  }, 120_000)
+
+  it('valor exato de meio milésimo dá o mesmo resultado no app e no banco (0,6355 → 0,636)', async () => {
+    const trials = [
+      ...[650, 323, 262, 460, 650, 632].map(rt => makeTrial({ color: 'azul', isTarget: true }, rt, 6)),
+      ...[0, 1].map(() => makeTrial({ color: 'azul', isTarget: true }, null, 6)),
+      ...Array.from({ length: 22 }, () => makeTrial({ color: 'verde', isTarget: false }, null, 6)),
+    ]
+    const saved = await save(db, await createUser(db), trials, 6)
+    expect(Number(saved.k_score)).toBe(0.636)
+    expect(computeResults(trials, 6).score.score).toBe(0.636)
+  })
 
   it('grava sessão, 30 eventos, XP e progresso uma única vez, mesmo com reenvio', async () => {
     const user = await createUser(db)
